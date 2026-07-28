@@ -13,7 +13,7 @@ import {
   readDimensions,
 } from "./image-processor-helpers";
 import type { AssetMode, BoxField, BoxValues, SelectedImage } from "./image-processor-helpers";
-import { OUTPUT_FORMATS } from "@/lib/output-format";
+import { OUTPUT_FORMATS, resultMetadataFor } from "@/lib/output-format";
 import type { OutputFormat } from "@/lib/output-format";
 
 const MODE_COPY: Readonly<Record<AssetMode, string>> = { logo: "로고", icon: "아이콘", photo: "사진" };
@@ -75,14 +75,14 @@ const errorMessageFrom = (responseText: string): string => {
 const downloadResult = async (response: Response, outputFormat: OutputFormat): Promise<void> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
   const disposition = response.headers.get("Content-Disposition")?.toLowerCase() ?? "";
-  const expected = outputFormat === "zip" ? { contentType: "application/zip", extension: ".zip" } : outputFormat === "png" ? { contentType: "image/png", extension: ".png" } : { contentType: "image/svg+xml", extension: ".svg" };
-  if (!contentType.includes(expected.contentType) || !disposition.includes(expected.extension)) throw new ClientJobError("서버가 선택한 형식의 결과를 반환하지 않았습니다. 다시 시도해 주세요.");
+  const expected = resultMetadataFor(outputFormat);
+  if (!contentType.includes(expected.contentType) || !disposition.includes(expected.name)) throw new ClientJobError("서버가 선택한 형식의 결과를 반환하지 않았습니다. 다시 시도해 주세요.");
   const file = await response.blob();
   if (file.size === 0) throw new ClientJobError("빈 결과 파일을 받았습니다. 다시 시도해 주세요.");
   const objectUrl = URL.createObjectURL(file);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
-  anchor.download = outputFormat === "zip" ? "imagework-results.zip" : outputFormat === "png" ? "result.png" : "result.svg";
+  anchor.download = expected.name;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -329,14 +329,15 @@ export function ImageProcessor() {
         <p className="field-help">PNG는 투명 이미지, SVG는 로고·아이콘 전용 벡터 파일, ZIP은 해당 작업의 모든 결과를 포함합니다.</p>
         <div className="mode-list">{OUTPUT_FORMATS.map((format) => {
           const unavailable = format === "svg" && assetMode === "photo";
-          return <label className="mode-option" key={format}><input aria-label={OUTPUT_COPY[format]} checked={outputFormat === format} disabled={unavailable} name="output-format" type="radio" value={format} onChange={() => setOutputFormat(format)} /><span>{OUTPUT_COPY[format]}</span><small>{unavailable ? "로고·아이콘 전용" : format === "zip" ? "모든 결과" : "단일 파일"}</small></label>;
+          const hintId = `output-format-${format}-hint`;
+          return <label className="mode-option" key={format}><input aria-describedby={hintId} aria-label={OUTPUT_COPY[format]} checked={outputFormat === format} disabled={unavailable} name="output-format" type="radio" value={format} onChange={() => setOutputFormat(format)} /><span>{OUTPUT_COPY[format]}</span><small id={hintId}>{unavailable ? "로고·아이콘 전용" : format === "zip" ? "모든 결과" : "단일 파일"}</small></label>;
         })}</div>
       </fieldset>
 
       <fieldset className="form-section" disabled={isBusy} aria-describedby="box-help box-status">
         <div className="field-heading"><div><p className="section-kicker">AREA</p><legend>대상 영역</legend></div><span className="quiet-badge">0–1 정규화</span></div>
         <p className="field-help" id="box-help">이미지 위를 드래그해 대상 영역을 지정하거나, 아래 값을 직접 입력해 정밀 조정합니다. 값은 0–1 범위입니다.</p>
-        {selectedImage && previewUrl && <div className="cropper-wrap"><div aria-describedby="box-help" aria-label="이미지에서 대상 영역 지정" className="cropper" role="group" style={{ aspectRatio: `${selectedImage.width} / ${selectedImage.height}` }} onLostPointerCapture={() => { if (dragStartBox.current) setBox(dragStartBox.current); dragOrigin.current = undefined; dragStartBox.current = undefined; }} onPointerCancel={handleCropPointerCancel} onPointerDown={handleCropPointerDown} onPointerMove={updateBoxFromPointer} onPointerUp={handleCropPointerUp}><Image alt="" draggable={false} fill sizes="(max-width: 680px) 100vw, 600px" src={previewUrl} unoptimized /><div aria-hidden="true" className="cropper-selection" style={previewStyleFor(box)} /></div><p className="cropper-help">이미지 안에서 드래그해 영역을 다시 지정할 수 있습니다. 키보드나 정밀 조정에는 아래 숫자 입력을 사용하세요.</p></div>}
+        {selectedImage && previewUrl && <div className="cropper-wrap"><div aria-describedby="box-help" aria-label="이미지에서 대상 영역 지정" className="cropper" role="group" style={{ aspectRatio: `${selectedImage.width} / ${selectedImage.height}` }} onLostPointerCapture={handleCropPointerCancel} onPointerCancel={handleCropPointerCancel} onPointerDown={handleCropPointerDown} onPointerMove={updateBoxFromPointer} onPointerUp={handleCropPointerUp}><Image alt="" draggable={false} fill sizes="(max-width: 680px) 100vw, 600px" src={previewUrl} unoptimized /><div aria-hidden="true" className="cropper-selection" style={previewStyleFor(box)} /></div><p className="cropper-help">이미지 안에서 드래그해 영역을 다시 지정할 수 있습니다. 키보드나 정밀 조정에는 아래 숫자 입력을 사용하세요.</p></div>}
         <div className="box-grid">{BOX_FIELDS.map((field) => <label className="number-field" key={field}><span>{BOX_LABELS[field]}</span><input aria-invalid={boxTouched && Boolean(currentBoxError)} inputMode="decimal" max="1" min="0" name={field} step="0.01" type="number" value={box[field]} onBlur={() => setBoxTouched(true)} onChange={(event) => { const value = event.currentTarget.value; setBoxTouched(true); setBox((current) => ({ ...current, [field]: value })); }} /></label>)}</div>
         {boxTouched && currentBoxError && <p className="field-status is-error" id="box-status" role="alert">{currentBoxError}</p>}
       </fieldset>

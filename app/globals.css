@@ -81,7 +81,7 @@ button, input { font: inherit; }
 .box-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); margin-top: var(--space-3); }
 .cropper-wrap { margin-top: var(--space-3); }
 .cropper { position: relative; width: 100%; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface-subtle); cursor: crosshair; touch-action: none; }
-.cropper:focus-within { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+.cropper:hover { border-color: var(--action-primary); }
 .cropper img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; }
 .cropper-selection { position: absolute; border: 2px solid var(--action-primary); background: rgb(52 52 109 / 12%); box-shadow: 0 0 0 9999px rgb(29 29 34 / 32%); pointer-events: none; }
 .cropper-help { margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 13px; line-height: 20px; }

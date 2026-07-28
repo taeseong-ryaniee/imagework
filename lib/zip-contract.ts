@@ -68,7 +68,11 @@ export const extractRequestedResult = async (path: string, mode: AssetMode, outp
   await assertExpectedArchive(path, mode);
   const metadata = resultMetadataFor(outputFormat);
   switch (outputFormat) {
-    case "zip": return { ...metadata, bytes: await readFile(path) };
+    case "zip": try {
+      return { ...metadata, bytes: await readFile(path) };
+    } catch (error) {
+      throw error instanceof ResultContractError ? error : new ResultContractError();
+    }
     case "png": return { ...metadata, bytes: await readMember(path, metadata.name) };
     case "svg": {
       if (mode === "photo") throw new ResultContractError();
