@@ -102,6 +102,8 @@ const normalizedPointFor = (event: React.PointerEvent<HTMLDivElement>): Normaliz
   return { x: clamp((event.clientX - bounds.left) / bounds.width), y: clamp((event.clientY - bounds.top) / bounds.height) };
 };
 const coordinate = (value: number): string => String(Number(value.toFixed(4)));
+const dragCommitThreshold = 0.01;
+const dragDistance = (a: NormalizedPoint, b: NormalizedPoint): number => Math.hypot(a.x - b.x, a.y - b.y);
 const boxForDrag = (origin: NormalizedPoint, current: NormalizedPoint): BoxValues => {
   const left = Math.min(origin.x, current.x);
   const top = Math.min(origin.y, current.y);
@@ -175,20 +177,20 @@ export function ImageProcessor() {
   }
 
   function updateBoxFromPointer(event: React.PointerEvent<HTMLDivElement>): void {
+    if (isBusy) return;
     const entry = dragState.current.get(event.pointerId);
     const point = normalizedPointFor(event);
-    if (!entry || !point) return;
+    if (!entry || !point || dragDistance(entry.origin, point) < dragCommitThreshold) return;
     setBox(boxForDrag(entry.origin, point));
     setBoxTouched(true);
   }
 
   function handleCropPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    if (isBusy) return;
     const point = normalizedPointFor(event);
     if (!point) return;
     dragState.current.set(event.pointerId, { origin: point, startBox: box });
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    setBox(boxForDrag(point, point));
-    setBoxTouched(true);
   }
 
   function clearCropDrag(event: React.PointerEvent<HTMLDivElement>): void {
@@ -335,7 +337,7 @@ export function ImageProcessor() {
       <fieldset className="form-section" disabled={isBusy} aria-describedby="box-help box-status">
         <div className="field-heading"><div><p className="section-kicker">AREA</p><legend>대상 영역</legend></div><span className="quiet-badge">0–1 정규화</span></div>
         <p className="field-help" id="box-help">이미지 위를 드래그해 대상 영역을 지정하거나, 아래 값을 직접 입력해 정밀 조정합니다. 값은 0–1 범위입니다.</p>
-        {selectedImage && previewUrl && <div className="cropper-wrap"><div aria-describedby="box-help" aria-label="이미지에서 대상 영역 지정" className="cropper" role="group" style={{ aspectRatio: `${selectedImage.width} / ${selectedImage.height}` }} onLostPointerCapture={handleCropPointerCancel} onPointerCancel={handleCropPointerCancel} onPointerDown={handleCropPointerDown} onPointerMove={updateBoxFromPointer} onPointerUp={handleCropPointerUp}><Image alt="" draggable={false} fill sizes="(max-width: 680px) 100vw, 600px" src={previewUrl} unoptimized /><div aria-hidden="true" className="cropper-selection" style={previewStyleFor(box)} /></div><p className="cropper-help">이미지 안에서 드래그해 영역을 다시 지정할 수 있습니다. 키보드나 정밀 조정에는 아래 숫자 입력을 사용하세요.</p></div>}
+        {selectedImage && previewUrl && <div className="cropper-wrap"><div aria-describedby="box-help" aria-disabled={isBusy} aria-label="이미지에서 대상 영역 지정" className="cropper" role="group" style={{ aspectRatio: `${selectedImage.width} / ${selectedImage.height}`, pointerEvents: isBusy ? "none" : undefined }} onLostPointerCapture={handleCropPointerCancel} onPointerCancel={handleCropPointerCancel} onPointerDown={handleCropPointerDown} onPointerMove={updateBoxFromPointer} onPointerUp={handleCropPointerUp}><Image alt="" draggable={false} fill sizes="(max-width: 680px) 100vw, 600px" src={previewUrl} unoptimized /><div aria-hidden="true" className="cropper-selection" style={previewStyleFor(box)} /></div><p className="cropper-help">이미지 안에서 드래그해 영역을 다시 지정할 수 있습니다. 키보드나 정밀 조정에는 아래 숫자 입력을 사용하세요.</p></div>}
         <div className="box-grid">{BOX_FIELDS.map((field) => <label className="number-field" key={field}><span>{BOX_LABELS[field]}</span><input aria-invalid={boxTouched && Boolean(currentBoxError)} inputMode="decimal" max="1" min="0" name={field} step="0.01" type="number" value={box[field]} onBlur={() => setBoxTouched(true)} onChange={(event) => { const value = event.currentTarget.value; setBoxTouched(true); setBox((current) => ({ ...current, [field]: value })); }} /></label>)}</div>
         {boxTouched && currentBoxError && <p className="field-status is-error" id="box-status" role="alert">{currentBoxError}</p>}
       </fieldset>

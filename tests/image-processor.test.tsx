@@ -146,6 +146,42 @@ describe("ImageProcessor", () => {
     expect(height.value).toBe("0.5");
   });
 
+  it("leaves the box untouched when the cropper receives a click without a drag", async () => {
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    const cropper = screen.getByLabelText("이미지에서 대상 영역 지정");
+    vi.spyOn(cropper, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 100));
+
+    fireEvent.pointerDown(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.pointerUp(cropper, { clientX: 20, clientY: 20 });
+
+    const values = ["중심 X", "중심 Y", "너비", "높이"].map((name) => screen.getByRole("spinbutton", { name }));
+    if (!values.every((value): value is HTMLInputElement => value instanceof HTMLInputElement)) throw new Error("Normalized box fields were expected.");
+    expect(values.map((value) => value.value)).toEqual(["0.5", "0.5", "1", "1"]);
+  });
+
+  it("ignores crop drag gestures while a job is busy", async () => {
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const cropper = screen.getByLabelText("이미지에서 대상 영역 지정");
+    vi.spyOn(cropper, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 100));
+    fireEvent.pointerDown(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(cropper, { clientX: 120, clientY: 70 });
+    fireEvent.pointerUp(cropper, { clientX: 120, clientY: 70 });
+
+    const values = ["중심 X", "중심 Y", "너비", "높이"].map((name) => screen.getByRole("spinbutton", { name }));
+    if (!values.every((value): value is HTMLInputElement => value instanceof HTMLInputElement)) throw new Error("Normalized box fields were expected.");
+    expect(values.map((value) => value.value)).toEqual(["0.5", "0.5", "1", "1"]);
+  });
+
   it("restores the last box when a crop drag is cancelled", async () => {
     render(<ImageProcessor />);
 
