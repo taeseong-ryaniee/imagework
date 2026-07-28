@@ -97,7 +97,7 @@ const extensionFor = (name: string): ImageExtension => {
 export const parseProcessFormData = async (formData: FormData): Promise<ProcessInput> => {
   const parsed = requestSchema.safeParse({
     mode: formData.get("mode"),
-    outputFormat: formData.get("outputFormat"),
+    outputFormat: formData.get("outputFormat") ?? "zip",
     cx: formData.get("cx"),
     cy: formData.get("cy"),
     width: formData.get("width"),

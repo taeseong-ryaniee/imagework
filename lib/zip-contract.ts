@@ -18,66 +18,74 @@ const staticSvgAttributes = new Set([
 
 const expectedMembersFor = (mode: AssetMode): ReadonlySet<string> => mode === "photo" ? new Set(["result.png"]) : new Set(["result.png", "result.svg"]);
 
-export const assertExpectedArchive = async (path: string, mode: AssetMode): Promise<void> => {
-  try {
-    const info = await stat(path);
-    if (info.size <= 0 || info.size > maxArchiveBytes) throw new ResultContractError();
-    const expected = expectedMembersFor(mode);
-    await new Promise<void>((resolve, reject) => {
-      yauzl.open(path, { lazyEntries: true, validateEntrySizes: true }, (openError, archive) => {
-        if (openError || !archive) {
+type ValidatedMembers = Readonly<{ readonly png: Buffer; readonly svg?: Buffer }>;
+
+const validateArchive = async (path: string, mode: AssetMode): Promise<ValidatedMembers> => {
+  const info = await stat(path);
+  if (info.size <= 0 || info.size > maxArchiveBytes) throw new ResultContractError();
+  const expected = expectedMembersFor(mode);
+  await new Promise<void>((resolve, reject) => {
+    yauzl.open(path, { lazyEntries: true, validateEntrySizes: true }, (openError, archive) => {
+      if (openError || !archive) {
+        reject(new ResultContractError());
+        return;
+      }
+      const members = new Set<string>();
+      let complete = false;
+      archive.on("entry", (entry) => {
+        if (entry.uncompressedSize > maxMemberBytes || !expected.has(entry.fileName) || members.has(entry.fileName)) {
+          archive.close();
           reject(new ResultContractError());
           return;
         }
-        const members = new Set<string>();
-        let complete = false;
-        archive.on("entry", (entry) => {
-          if (entry.uncompressedSize > maxMemberBytes || !expected.has(entry.fileName) || members.has(entry.fileName)) {
-            archive.close();
-            reject(new ResultContractError());
-            return;
-          }
-          members.add(entry.fileName);
-          archive.readEntry();
-        });
-        archive.once("error", () => reject(new ResultContractError()));
-        archive.once("end", () => {
-          complete = members.size === expected.size && [...expected].every((member) => members.has(member));
-          if (!complete) {
-            reject(new ResultContractError());
-            return;
-          }
-          archive.close();
-        });
-        archive.once("close", () => {
-          if (complete) resolve();
-        });
+        members.add(entry.fileName);
         archive.readEntry();
       });
+      archive.once("error", () => reject(new ResultContractError()));
+      archive.once("end", () => {
+        complete = members.size === expected.size && [...expected].every((member) => members.has(member));
+        if (!complete) {
+          reject(new ResultContractError());
+          return;
+        }
+        archive.close();
+      });
+      archive.once("close", () => {
+        if (complete) resolve();
+      });
+      archive.readEntry();
     });
-    const png = await readMember(path, "result.png");
-    assertTransparentPng(png);
-    if (mode !== "photo") assertSafeStaticSvg(await readMember(path, "result.svg"));
+  });
+  const png = await readMember(path, "result.png");
+  assertTransparentPng(png);
+  if (mode === "photo") return { png };
+  const svg = await readMember(path, "result.svg");
+  assertSafeStaticSvg(svg);
+  return { png, svg };
+};
+
+export const assertExpectedArchive = async (path: string, mode: AssetMode): Promise<void> => {
+  try {
+    await validateArchive(path, mode);
   } catch (error) {
-    if (error instanceof ResultContractError) throw error;
-    throw new ResultContractError();
+    throw error instanceof ResultContractError ? error : new ResultContractError();
   }
 };
 
 export const extractRequestedResult = async (path: string, mode: AssetMode, outputFormat: OutputFormat): Promise<DownloadedResult> => {
-  await assertExpectedArchive(path, mode);
   const metadata = resultMetadataFor(outputFormat);
-  switch (outputFormat) {
-    case "zip": try {
-      return { ...metadata, bytes: await readFile(path) };
-    } catch (error) {
-      throw error instanceof ResultContractError ? error : new ResultContractError();
+  try {
+    const members = await validateArchive(path, mode);
+    switch (outputFormat) {
+      case "zip": return { ...metadata, bytes: await readFile(path) };
+      case "png": return { ...metadata, bytes: members.png };
+      case "svg": {
+        if (!members.svg) throw new ResultContractError();
+        return { ...metadata, bytes: members.svg };
+      }
     }
-    case "png": return { ...metadata, bytes: await readMember(path, metadata.name) };
-    case "svg": {
-      if (mode === "photo") throw new ResultContractError();
-      return { ...metadata, bytes: await readMember(path, metadata.name) };
-    }
+  } catch (error) {
+    throw error instanceof ResultContractError ? error : new ResultContractError();
   }
 };
 

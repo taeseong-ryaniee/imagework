@@ -58,7 +58,7 @@ class ControlledRunner {
   cleanupComplete = false;
   stopAttempted = false;
 
-  async run(_input: ProcessInput, signal?: AbortSignal): Promise<{ readonly name: "imagework-results.zip"; readonly bytes: Buffer }> {
+  async run(_input: ProcessInput, signal?: AbortSignal): Promise<{ readonly name: "imagework-results.zip"; readonly bytes: Buffer; readonly contentType: "application/zip" }> {
     if (signal?.aborted) throw new JobCancelledError();
     this.allocations += 1;
     this.started.resolve();
@@ -68,13 +68,13 @@ class ControlledRunner {
         this.stopAttempted = true;
         reject(new JobCancelledError());
       }, { once: true });
-      this.release.promise.then(() => resolve({ name: "imagework-results.zip", bytes: Buffer.from([]) }));
+      this.release.promise.then(() => resolve({ name: "imagework-results.zip", bytes: Buffer.from([]), contentType: "application/zip" }));
     });
   }
 }
 
 class QueueFullRunner {
-  async run(): Promise<{ readonly name: "imagework-results.zip"; readonly bytes: Buffer }> {
+  async run(): Promise<{ readonly name: "imagework-results.zip"; readonly bytes: Buffer; readonly contentType: "application/zip" }> {
     throw new QueueCapacityError();
   }
 }

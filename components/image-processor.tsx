@@ -135,8 +135,7 @@ export function ImageProcessor() {
   const activeJobId = useRef<string | undefined>(undefined);
   const cancellationRequested = useRef(false);
   const cancelEndpointUnconfirmed = useRef(false);
-  const dragOrigin = useRef<NormalizedPoint | undefined>(undefined);
-  const dragStartBox = useRef<BoxValues | undefined>(undefined);
+  const dragState = useRef<Map<number, Readonly<{ readonly origin: NormalizedPoint; readonly startBox: BoxValues }>>>(new Map());
   const currentBoxError = boxError(box);
   const isBusy = jobState.kind === "preparing" || jobState.kind === "running" || jobState.kind === "cancelling" || jobState.kind === "downloading";
 
@@ -176,26 +175,24 @@ export function ImageProcessor() {
   }
 
   function updateBoxFromPointer(event: React.PointerEvent<HTMLDivElement>): void {
-    const origin = dragOrigin.current;
+    const entry = dragState.current.get(event.pointerId);
     const point = normalizedPointFor(event);
-    if (!origin || !point) return;
-    setBox(boxForDrag(origin, point));
+    if (!entry || !point) return;
+    setBox(boxForDrag(entry.origin, point));
     setBoxTouched(true);
   }
 
   function handleCropPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     const point = normalizedPointFor(event);
     if (!point) return;
-    dragOrigin.current = point;
-    dragStartBox.current = box;
+    dragState.current.set(event.pointerId, { origin: point, startBox: box });
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setBox(boxForDrag(point, point));
     setBoxTouched(true);
   }
 
   function clearCropDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    dragOrigin.current = undefined;
-    dragStartBox.current = undefined;
+    dragState.current.delete(event.pointerId);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
@@ -205,7 +202,8 @@ export function ImageProcessor() {
   }
 
   function handleCropPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
-    if (dragStartBox.current) setBox(dragStartBox.current);
+    const entry = dragState.current.get(event.pointerId);
+    if (entry) setBox(entry.startBox);
     clearCropDrag(event);
   }
 

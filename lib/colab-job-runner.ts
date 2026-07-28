@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { ProcessInput } from "./colab-input";
 import { CommandExecutionError, JobCancelledError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, RunnerConfigurationError } from "./colab-errors";
 import { extractRequestedResult } from "./zip-contract";
+import type { DownloadedResult } from "./output-format";
 
 const authModes = ["adc"] as const;
 const accelerators = ["T4"] as const;
@@ -64,10 +65,7 @@ export interface CommandRunner {
   run(command: string, args: readonly string[], options?: CommandOptions): Promise<string>;
 }
 
-type JobResult = Readonly<{
-  readonly bytes: Buffer;
-  readonly name: "imagework-results.zip" | "result.png" | "result.svg";
-}>;
+type JobResult = DownloadedResult;
 
 const configValue = (environment: EnvironmentSource, name: string): string | undefined => environment[name];
 
@@ -276,8 +274,7 @@ export class ColabJobRunner {
       await rm(localToken, { force: true });
       await this.colab(["exec", "-s", session], environment, startedAt, workerCommand("--run"), signal);
       await this.colab(["download", "-s", session, `${remoteRoot}/imagework-results.zip`, localResult], environment, startedAt, undefined, signal);
-      const result = await extractRequestedResult(localResult, input.mode, input.outputFormat);
-      return { bytes: result.bytes, name: result.name };
+      return await extractRequestedResult(localResult, input.mode, input.outputFormat);
     } finally {
       await rm(localToken, { force: true });
       const remoteStopped = !sessionConfirmed || await this.cleanupRemote(session, remoteRoot, isolatedEnvironment(homeRoot, stateRoot, cacheRoot, localCredentials));

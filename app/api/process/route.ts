@@ -1,7 +1,6 @@
 import { ColabJobRunner, matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/colab-job-runner";
 import { CommandExecutionError, ImageworkInputError, JobCancelledError, JobRegistrationError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, ResultContractError, RunnerConfigurationError } from "@/lib/colab-errors";
 import { maxMultipartRequestBytes, parseProcessFormData } from "@/lib/colab-input";
-import { resultMetadataFor } from "@/lib/output-format";
 import { parseProcessJobId, processJobRegistry, type ProcessJobRegistry } from "@/lib/process-job-registry";
 
 export const runtime = "nodejs";
@@ -37,11 +36,10 @@ export const createProcessHandler = (runnerProvider: RunnerProvider, registry: P
     const jobSignal = registry.register(jobId);
     registeredJobId = jobId;
     const result = await runnerProvider().run(input, AbortSignal.any([jobSignal, request.signal]));
-    const responseMetadata = resultMetadataFor(input.outputFormat);
     return new Response(new Uint8Array(result.bytes), {
       headers: {
         "Content-Disposition": `attachment; filename="${result.name}"`,
-        "Content-Type": responseMetadata.contentType,
+        "Content-Type": result.contentType,
         ...apiHeaders,
       },
     });
