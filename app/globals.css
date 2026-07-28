@@ -34,7 +34,7 @@
 
 * { box-sizing: border-box; }
 html { background: var(--surface-page); }
-body { margin: 0; background: var(--surface-page); color: var(--text-primary); font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--surface-page); color: var(--text-primary); font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input { font: inherit; }
 
 .helper-page { min-height: 100dvh; padding: var(--space-12) var(--space-5); }

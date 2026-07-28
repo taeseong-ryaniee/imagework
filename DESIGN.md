@@ -63,8 +63,11 @@ assuming utility-color combinations do so.
 
 ### Scale
 
-The app currently inherits the browser/Tailwind sans stack; it does not load a
-custom web font. Preserve that low-cost, Korean-capable system stack.
+The app self-hosts Pretendard Variable through `next/font/local`, exposed as
+the `--font-sans` CSS variable on `<html>`. Next.js serves the woff2 file from
+the same origin as a static asset; the browser never requests a font CDN. The
+system stack remains the fallback chain after `--font-sans` so text stays
+legible if the variable is ever unset.
 
 | Level | Size | Weight | Line height | Usage |
 | --- | --- | --- | --- |
@@ -74,9 +77,11 @@ custom web font. Preserve that low-cost, Korean-capable system stack.
 | Label/action | 16px | 500 | normal | Field labels, modes, launch button |
 | Supporting/error text | 14px / `text-sm` | 400 | normal | Formats, limits, error recovery |
 
-Font stack: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-sans-serif`. The future helper must retain Korean copy in plain language,
-avoid all-caps instructional copy, and keep body text at or above 14px.
+Font stack: `var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont,
+"Segoe UI", sans-serif`, where `--font-sans` resolves to the self-hosted
+Pretendard Variable font. The helper must retain Korean copy in plain
+language, avoid all-caps instructional copy, and keep body text at or above
+14px.
 
 ## 4. Spacing & Layout
 
