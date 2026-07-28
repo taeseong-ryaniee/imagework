@@ -96,8 +96,7 @@ const cancellationMessage = (cancelEndpointUnconfirmed: boolean): string => canc
   : "브라우저 요청을 중단했습니다. 원격 GPU 작업의 정리 여부를 확인할 수 없습니다. 다시 시도할 수 있습니다.";
 
 const clamp = (value: number): number => Math.min(1, Math.max(0, value));
-const normalizedPointFor = (event: React.PointerEvent<HTMLDivElement>): NormalizedPoint | undefined => {
-  const bounds = event.currentTarget.getBoundingClientRect();
+const normalizedPointFor = (event: React.PointerEvent<HTMLDivElement>, bounds: DOMRect): NormalizedPoint | undefined => {
   if (bounds.width <= 0 || bounds.height <= 0) return undefined;
   return { x: clamp((event.clientX - bounds.left) / bounds.width), y: clamp((event.clientY - bounds.top) / bounds.height) };
 };
@@ -137,7 +136,7 @@ export function ImageProcessor() {
   const activeJobId = useRef<string | undefined>(undefined);
   const cancellationRequested = useRef(false);
   const cancelEndpointUnconfirmed = useRef(false);
-  const dragState = useRef<Map<number, Readonly<{ readonly origin: NormalizedPoint; readonly startBox: BoxValues }>>>(new Map());
+  const dragState = useRef<Map<number, Readonly<{ readonly origin: NormalizedPoint; readonly startBox: BoxValues; readonly bounds: DOMRect }>>>(new Map());
   const currentBoxError = boxError(box);
   const isBusy = jobState.kind === "preparing" || jobState.kind === "running" || jobState.kind === "cancelling" || jobState.kind === "downloading";
 
@@ -179,17 +178,19 @@ export function ImageProcessor() {
   function updateBoxFromPointer(event: React.PointerEvent<HTMLDivElement>): void {
     if (isBusy) return;
     const entry = dragState.current.get(event.pointerId);
-    const point = normalizedPointFor(event);
-    if (!entry || !point || dragDistance(entry.origin, point) < dragCommitThreshold) return;
+    if (!entry) return;
+    const point = normalizedPointFor(event, entry.bounds);
+    if (!point || dragDistance(entry.origin, point) < dragCommitThreshold) return;
     setBox(boxForDrag(entry.origin, point));
     setBoxTouched(true);
   }
 
   function handleCropPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
     if (isBusy) return;
-    const point = normalizedPointFor(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const point = normalizedPointFor(event, bounds);
     if (!point) return;
-    dragState.current.set(event.pointerId, { origin: point, startBox: box });
+    dragState.current.set(event.pointerId, { origin: point, startBox: box, bounds });
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
