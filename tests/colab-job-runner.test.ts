@@ -283,7 +283,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "photo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     })).rejects.toMatchObject({ name: "RunnerConfigurationError" });
 
     expect(commands.calls.map((call) => call.args)).toEqual([["version"]]);
@@ -293,6 +293,7 @@ describe("ColabJobRunner", () => {
     const invalidExtension = new FormData();
     invalidExtension.set("file", new File([png], "source.avif", { type: "image/avif" }));
     invalidExtension.set("mode", "photo");
+    invalidExtension.set("outputFormat", "zip");
     invalidExtension.set("cx", "0.5");
     invalidExtension.set("cy", "0.5");
     invalidExtension.set("width", "0.8");
@@ -304,6 +305,7 @@ describe("ColabJobRunner", () => {
     const invalidBox = new FormData();
     invalidBox.set("file", new File([png], "source.png", { type: "image/png" }));
     invalidBox.set("mode", "photo");
+    invalidBox.set("outputFormat", "zip");
     invalidBox.set("cx", "0.9");
     invalidBox.set("cy", "0.5");
     invalidBox.set("width", "0.8");
@@ -311,6 +313,20 @@ describe("ColabJobRunner", () => {
     invalidBox.set("processingCode", "0123456789abcdef0123456789abcdef");
 
     await expect(parseProcessFormData(invalidBox)).rejects.toMatchObject({ name: "ImageworkInputError" });
+  });
+
+  it("rejects an SVG-only request for photo mode at the form boundary", async () => {
+    const form = new FormData();
+    form.set("file", new File([png], "source.png", { type: "image/png" }));
+    form.set("mode", "photo");
+    form.set("outputFormat", "svg");
+    form.set("cx", "0.5");
+    form.set("cy", "0.5");
+    form.set("width", "0.8");
+    form.set("height", "0.8");
+    form.set("processingCode", "0123456789abcdef0123456789abcdef");
+
+    await expect(parseProcessFormData(form)).rejects.toMatchObject({ name: "ImageworkInputError" });
   });
 
   it("runs one isolated argv-only lifecycle and returns only an expected logo archive", async () => {
@@ -323,7 +339,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "logo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     });
 
     expect(result.name).toBe("imagework-results.zip");
@@ -352,7 +368,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "photo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     })).rejects.toMatchObject({ name: "ResultContractError" });
 
     await expectIsolatedRootsEmpty(config);
@@ -368,7 +384,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "photo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     })).rejects.toMatchObject({ name: "CommandExecutionError" });
 
     expect(commands.calls.some((call) => call.args.includes("stop"))).toBe(failureStage !== "new");
@@ -379,7 +395,7 @@ describe("ColabJobRunner", () => {
     const config = await configFor();
     const commands = new FakeCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
-    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" };
+    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const };
 
     await Promise.all([runner.run(input), runner.run(input)]);
 
@@ -396,7 +412,7 @@ describe("ColabJobRunner", () => {
     const config = await configFor("1");
     const commands = new GatedNewCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
-    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" };
+    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const };
     const first = runner.run(input);
     await commands.newStarted.promise;
 
@@ -414,7 +430,7 @@ describe("ColabJobRunner", () => {
     const commands = new SessionPresenceCommands(`imagework-${staleJobId}`, false, makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
 
-    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" });
+    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const });
 
     expect(commands.calls[0]?.args).toEqual(["version"]);
     expect(commands.calls[1]?.args.includes("sessions")).toBe(true);
@@ -430,7 +446,7 @@ describe("ColabJobRunner", () => {
     const commands = new FakeCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
 
-    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" });
+    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const });
 
     expect(commands.calls[0]?.args).toEqual(["version"]);
     expect(commands.calls[1]?.args.includes("sessions")).toBe(true);
@@ -447,7 +463,7 @@ describe("ColabJobRunner", () => {
     const commands = new SessionPresenceCommands(session, false, makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
 
-    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" });
+    await runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const });
 
     const sessionCheck = commands.calls.findIndex((call) => call.args.includes("sessions"));
     const stop = commands.calls.findIndex((call) => call.args.includes("stop"));
@@ -464,7 +480,7 @@ describe("ColabJobRunner", () => {
     const commands = new AmbiguousSessionsCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
 
-    await expect(runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" })).rejects.toMatchObject({ name: "CommandExecutionError" });
+    await expect(runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const })).rejects.toMatchObject({ name: "CommandExecutionError" });
 
     await expect(readdir(config.recoveryRoot)).resolves.toEqual([staleJobId]);
     expect(commands.calls.some((call) => call.args.includes("stop"))).toBe(true);
@@ -477,7 +493,7 @@ describe("ColabJobRunner", () => {
     await writeFile(join(config.recoveryRoot, staleJobId), "confirmed-session", { mode: 0o600 });
     const commands = new SessionPresenceCommands(`imagework-${staleJobId}`, true, makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
-    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" };
+    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const };
 
     await expect(runner.run(input)).rejects.toMatchObject({ name: "CommandExecutionError" });
     await expect(readdir(config.recoveryRoot)).resolves.toEqual([staleJobId]);
@@ -491,7 +507,7 @@ describe("ColabJobRunner", () => {
     const config = await configFor();
     const commands = new FailFirstStopCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
-    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" };
+    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const };
 
     await expect(runner.run(input)).rejects.toMatchObject({ name: "CommandExecutionError" });
     await expect(readdir(config.recoveryRoot)).resolves.toHaveLength(1);
@@ -505,7 +521,7 @@ describe("ColabJobRunner", () => {
     const config = await configFor();
     const commands = new GatedNewCommands(makeZip(["result.png"]));
     const runner = new ColabJobRunner(config, commands);
-    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef" };
+    const input = { bytes: png, extension: ".png" as const, mode: "photo" as const, box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const };
     const activeJob = runner.run(input);
     await commands.newStarted.promise;
     const controller = new AbortController();
@@ -528,7 +544,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "photo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     }, controller.signal);
     await commands.uploadStarted.promise;
     controller.abort();
@@ -549,7 +565,7 @@ describe("ColabJobRunner", () => {
       extension: ".png",
       mode: "photo",
       box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
-      processingCode: "0123456789abcdef0123456789abcdef",
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "zip" as const,
     }, controller.signal);
     await commands.downloadStarted.promise;
     controller.abort();
@@ -564,7 +580,7 @@ describe("ColabJobRunner", () => {
     const commands = new FakeCommands();
     const runner = new ColabJobRunner(config, commands);
 
-    await expect(runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "wrong" })).rejects.toMatchObject({ name: "ProcessingCodeError" });
+    await expect(runner.run({ bytes: png, extension: ".png", mode: "photo", box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 }, processingCode: "wrong", outputFormat: "zip" as const })).rejects.toMatchObject({ name: "ProcessingCodeError" });
     expect(commands.calls).toHaveLength(0);
   });
 });

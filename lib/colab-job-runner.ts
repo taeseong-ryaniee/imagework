@@ -1,11 +1,11 @@
-import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import type { ProcessInput } from "./colab-input";
 import { CommandExecutionError, JobCancelledError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, RunnerConfigurationError } from "./colab-errors";
-import { assertExpectedArchive } from "./zip-contract";
+import { extractRequestedResult } from "./zip-contract";
 
 const authModes = ["adc"] as const;
 const accelerators = ["T4"] as const;
@@ -64,10 +64,10 @@ export interface CommandRunner {
   run(command: string, args: readonly string[], options?: CommandOptions): Promise<string>;
 }
 
-type JobResult = {
-  readonly name: "imagework-results.zip";
+type JobResult = Readonly<{
   readonly bytes: Buffer;
-};
+  readonly name: "imagework-results.zip" | "result.png" | "result.svg";
+}>;
 
 const configValue = (environment: EnvironmentSource, name: string): string | undefined => environment[name];
 
@@ -276,8 +276,8 @@ export class ColabJobRunner {
       await rm(localToken, { force: true });
       await this.colab(["exec", "-s", session], environment, startedAt, workerCommand("--run"), signal);
       await this.colab(["download", "-s", session, `${remoteRoot}/imagework-results.zip`, localResult], environment, startedAt, undefined, signal);
-      await assertExpectedArchive(localResult, input.mode);
-      return { name: "imagework-results.zip", bytes: await readFile(localResult) };
+      const result = await extractRequestedResult(localResult, input.mode, input.outputFormat);
+      return { bytes: result.bytes, name: result.name };
     } finally {
       await rm(localToken, { force: true });
       const remoteStopped = !sessionConfirmed || await this.cleanupRemote(session, remoteRoot, isolatedEnvironment(homeRoot, stateRoot, cacheRoot, localCredentials));

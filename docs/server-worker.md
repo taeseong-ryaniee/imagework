@@ -1,10 +1,12 @@
 # Imagework server-worker deployment
 
 Imagework is a server-side worker service. Its browser form posts an image,
-asset mode, normalized box, a browser-generated UUID, and deployment-shared
-processing code to the same-origin `/api/process` route. The server serializes jobs, runs the official
-Google Colab CLI in an isolated temporary context, validates the returned ZIP,
-sends that ZIP as an attachment, then deletes local and remote job state.
+asset mode, requested output format, normalized box, a browser-generated UUID,
+and deployment-shared processing code to the same-origin `/api/process` route.
+The server serializes jobs, runs the official Google Colab CLI in an isolated
+temporary context, validates the returned ZIP, extracts only the requested PNG
+or SVG when selected (or returns the ZIP), then deletes local and remote job
+state.
 
 This guide deliberately has no authentication values. Configure and run the
 official CLI only on the worker host; do not automate an interactive browser
@@ -81,8 +83,10 @@ and processing code.
 
 For each request the service:
 
-1. validates the actual input bytes, extension, dimensions, mode, and box
-   geometry before queuing;
+1. validates the actual input bytes, extension, dimensions, mode, selected
+   output format, and box geometry before queuing; the browser may set the box
+   by dragging in its local proportional preview or by entering normalized
+   numeric values, but the server remains the authority;
 2. explicitly sets fresh local and CLI-state directories to `0700` and staged
    files to `0600`;
 3. creates one fresh T4 session via `colab new`, uploads only the input,
@@ -91,8 +95,8 @@ For each request the service:
 4. executes the worker's preparation stage, which validates the base runtime
    and installs/verifies the pinned sources before the token exists remotely;
 5. uploads the token file only after preparation succeeds, executes inference,
-   downloads only `imagework-results.zip`, and checks its
-   exact expected members and size limits;
+   downloads only `imagework-results.zip`, checks its exact expected members
+   and size limits, then returns only the browser-selected PNG, SVG, or ZIP;
 6. deletes the local token file, removes the remote job directory, stops the
    session, and deletes every local job/config/cache/state directory in a
    `finally` path.
@@ -132,10 +136,12 @@ are intentionally not installed from the lock.
 
 ## 5. Browser contract and failures
 
-The browser receives only a ZIP attachment on success. It never receives raw
-CLI output, command lines, stack traces, token values, OAuth paths, remote
-paths, session identifiers, or provider diagnostics. The UI maps failures to
-safe Korean recovery messages for invalid input, invalid processing code,
+The browser receives only its selected attachment on success: a transparent
+`result.png`, a logo/icon-only `result.svg`, or `imagework-results.zip`.
+The server rejects an SVG-only request for photo mode. The browser never
+receives raw CLI output, command lines, stack traces, token values, OAuth paths,
+remote paths, session identifiers, or provider diagnostics. The UI maps failures
+to safe Korean recovery messages for invalid input, invalid processing code,
 queue/job cancellation, timeout, unavailable accelerator/model access,
 processing failure, and invalid result archive.
 
@@ -172,8 +178,9 @@ Before accepting traffic:
 
 1. Run the automated checks listed in the README.
 2. Use a disposable image and a non-production processing code to confirm a
-   valid multipart request yields an attachment named
-   `imagework-results.zip` with exactly the expected members.
+   valid multipart request yields each selectable attachment: transparent PNG,
+   logo/icon SVG, and ZIP with exactly the expected members. Confirm photo mode
+   cannot request SVG.
 3. Independently verify bad code, invalid image bytes, CLI failure, and client
    cancellation all return only safe messages/statuses and leave no job files
    or per-job CLI state behind.

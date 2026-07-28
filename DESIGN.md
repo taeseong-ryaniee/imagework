@@ -154,36 +154,47 @@ viewport checks are the required manual QA set.
 
 ### Normalized box controls
 
-- **Structure:** four labelled numeric fields for `BOX_CX`, `BOX_CY`, `BOX_W`,
-  and `BOX_H`, with a short explanation that values are normalized from 0 to 1.
+- **Structure:** after a valid local file is chosen, a proportional image
+  preview has a visible draggable selection rectangle. Dragging creates the
+  normalized box; four labelled numeric fields for `BOX_CX`, `BOX_CY`,
+  `BOX_W`, and `BOX_H` remain the keyboard and precision-adjustment path.
+- **Synchronization:** drag changes immediately update all four fields;
+  numeric edits immediately update the selection rectangle. The preview uses
+  the image's measured aspect ratio, so the pointer and normalized coordinates
+  agree.
 - **States:** default centered values; hover (a modest border or surface cue);
   active/native press; focus-visible (the `--focus-ring` outline); edited-valid;
   out-of-range; nonnumeric; invalid geometry (an edge would fall outside 0–1);
   and disabled when the helper cannot accept edits. A launch attempt explains
   the first invalid field and keeps the user’s entered values.
 - **Accessibility:** every field has a programmatic label and format hint;
-  invalid fields expose `aria-invalid` and reference their error text. Keyboard
-  input must not require drag gestures or a visual coordinate picker.
+  invalid fields expose `aria-invalid` and reference their error text. The
+  preview states that dragging is optional; keyboard input never requires drag
+  gestures or a visual coordinate picker.
 
 ### Boundary notice
 
 - **Structure:** short plain-language text immediately before the action.
 - **Content contract:** the selected image and settings are sent to the
-  temporary server job only; its result is returned as a ZIP and job data is
-  removed afterwards. The Hugging Face and Google credentials remain on the
-  worker and are never entered in this browser form.
+  temporary server job only; its selected PNG, SVG, or ZIP result is returned
+  and job data is removed afterwards. The Hugging Face and Google credentials
+  remain on the worker and are never entered in this browser form.
 - **Accessibility:** ordinary readable text, not an icon-only disclosure.
 
-### Job action and download
+### Download-format choice, job action, and download
 
-- **Structure:** one full-width native submit button that sends a valid
-  multipart request to the same-origin worker route.
+- **Structure:** a labelled fieldset with native `PNG`, `SVG`, and `ZIP` radio
+  choices followed by one full-width native submit button. SVG is disabled for
+  photo mode and switching from SVG to photo restores PNG. The valid multipart
+  request includes the selected output format.
+- **Variants:** PNG and ZIP are available for every mode; SVG is available for
+  logo and icon only. ZIP contains every result available for the selected mode.
 - **States:** disabled with a nearby reason before completion; preparing;
   processing; downloading; completed; failed; cancelled; hover; active; and
   focus-visible. The visible state must match the actual request lifecycle.
-- **Accessibility:** use a native button, preserve a visible focus ring, expose
-  status through a polite live region, and offer a separate cancel control only
-  while an active request can be aborted.
+- **Accessibility:** native radios and button preserve keyboard operation and a
+  visible focus ring. Status uses a polite live region; a separate cancel
+  control appears only while an active request can be aborted.
 
 ### Validation summary
 
@@ -227,31 +238,33 @@ and a near-white tonal change.
   server-side are stated before the action.
 - Touch targets remain practical at narrow widths; text reflows at 200% zoom.
 - The output explanation must state: `result.png` is transparent; `result.svg`
-  is included only for `logo` and `icon`; JPEG output is not offered.
+  is available only for `logo` and `icon`; ZIP includes all results available
+  for the selected mode; JPEG output is not offered.
 
 ### Personas and manual QA specification
 
 | Persona / risk | Task and pass condition |
 | --- | --- |
-| Keyboard-only visitor | At 375, 768, and 1280px, tab through every control in order; every focused item is visible, radio keys work, invalid fields receive clear feedback, and the worker action/cancel control can be activated. |
+| Keyboard-only visitor | At 375, 768, and 1280px, tab through every control in order; every focused item is visible, radio keys work, numeric box fields remain the non-drag alternative, invalid fields receive clear feedback, and the worker action/cancel control can be activated. |
 | Low-vision / zoom visitor | At 200% zoom at each required viewport, text, errors, labels, and action remain visible without horizontal scrolling or ambiguous color-only state. |
 | Privacy-cautious visitor | Read the page before submitting and correctly understand that the image is sent only to a temporary server job, credentials remain server-side, and provider tokens are never entered on the website. |
 | Error-recovery visitor | Test invalid extension, over-10-MiB/over-20-MP metadata, no mode, nonnumeric/out-of-range box, and invalid box geometry. Each blocks launch, names recovery, retains valid prior entries, and clears when corrected. |
 
 Manual QA checklist, to run against the implemented worker form:
 
-1. At 375/768/1280px, inspect the card, labels, help text, three modes, four
-   box controls, error messages, and launch action for clipping, overlap, and
-   horizontal scroll.
-2. Keyboard-tab through the page, exercise radio arrow keys, edit all numeric
-   inputs, trigger each invalid state, correct it, and confirm focus remains
-   visible and errors are announced/associated.
+1. At 375/768/1280px, inspect the card, labels, help text, three modes, image
+   selection preview, four box controls, error messages, and launch action for
+   clipping, overlap, and horizontal scroll.
+2. Drag a selection across the image and confirm all numeric box fields update;
+   then keyboard-tab through the page, exercise radio arrow keys, edit all
+   numeric inputs, trigger each invalid state, correct it, and confirm focus
+   remains visible and errors are announced/associated.
 3. Submit a valid request against a controlled worker and verify the real
    preparing, processing, downloading, completion, cancellation, and safe
    failure states.
 4. Confirm the temporary-server-processing/no-provider-token explanation is
-   visible before submission and that output wording distinguishes PNG from
-   logo/icon-only SVG.
+   visible before submission, SVG is unavailable for photo mode, and output
+   wording distinguishes PNG, logo/icon-only SVG, and ZIP.
 
 ### Accepted debt
 

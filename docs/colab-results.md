@@ -32,7 +32,7 @@ files, Google Colab CLI transcripts, session IDs, paths, or secret values.
 
 | Scenario | Pass/Fail/Not run | Redacted observation |
 | --- | --- | --- |
-| Valid PNG upload returns ZIP attachment | | |
+| Valid PNG, SVG, and ZIP selections return the matching attachment | | |
 | Logo SVG included | | |
 | Photo SVG excluded | | |
 | Transparent `result.png` in ZIP | | |

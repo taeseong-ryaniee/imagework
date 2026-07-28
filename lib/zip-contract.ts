@@ -1,8 +1,10 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
 import * as yauzl from "yauzl";
 import type { AssetMode } from "./colab-input";
 import { ResultContractError } from "./colab-errors";
+import { resultMetadataFor } from "./output-format";
+import type { DownloadedResult, OutputFormat } from "./output-format";
 
 const maxArchiveBytes = 50 * 1024 * 1024;
 const maxMemberBytes = 45 * 1024 * 1024;
@@ -59,6 +61,19 @@ export const assertExpectedArchive = async (path: string, mode: AssetMode): Prom
   } catch (error) {
     if (error instanceof ResultContractError) throw error;
     throw new ResultContractError();
+  }
+};
+
+export const extractRequestedResult = async (path: string, mode: AssetMode, outputFormat: OutputFormat): Promise<DownloadedResult> => {
+  await assertExpectedArchive(path, mode);
+  const metadata = resultMetadataFor(outputFormat);
+  switch (outputFormat) {
+    case "zip": return { ...metadata, bytes: await readFile(path) };
+    case "png": return { ...metadata, bytes: await readMember(path, metadata.name) };
+    case "svg": {
+      if (mode === "photo") throw new ResultContractError();
+      return { ...metadata, bytes: await readMember(path, metadata.name) };
+    }
   }
 };
 

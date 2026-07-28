@@ -38,6 +38,7 @@ const processRequest = (id: string, processingHeader = processingCode, contentLe
   formData.set("jobId", id);
   formData.set("file", new File([png], "source.png", { type: "image/png" }));
   formData.set("mode", "photo");
+  formData.set("outputFormat", "zip");
   formData.set("cx", "0.5");
   formData.set("cy", "0.5");
   formData.set("width", "0.8");

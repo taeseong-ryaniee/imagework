@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { ImageworkInputError } from "./colab-errors";
+import { OUTPUT_FORMATS, outputSupportsMode } from "./output-format";
+import type { OutputFormat } from "./output-format";
 
 const assetModes = ["logo", "icon", "photo"] as const;
 const extensions = [".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"] as const;
@@ -19,18 +21,21 @@ export type ProcessInput = {
   readonly bytes: Buffer;
   readonly extension: ImageExtension;
   readonly mode: AssetMode;
+  readonly outputFormat: OutputFormat;
   readonly box: NormalizedBox;
   readonly processingCode: string;
 };
 
 const requestSchema = z.object({
   mode: z.enum(assetModes),
+  outputFormat: z.enum(OUTPUT_FORMATS),
   cx: z.coerce.number().finite().min(0).max(1),
   cy: z.coerce.number().finite().min(0).max(1),
   width: z.coerce.number().finite().gt(0).max(1),
   height: z.coerce.number().finite().gt(0).max(1),
   processingCode: z.string().min(1).max(512),
 }).superRefine((value, context) => {
+  if (!outputSupportsMode(value.outputFormat, value.mode)) context.addIssue({ code: "custom", path: ["outputFormat"], message: "SVG output requires logo or icon mode" });
   if (value.cx - value.width / 2 < 0 || value.cx + value.width / 2 > 1 || value.cy - value.height / 2 < 0 || value.cy + value.height / 2 > 1) {
     context.addIssue({ code: "custom", message: "The normalized box must remain within the image." });
   }
@@ -92,6 +97,7 @@ const extensionFor = (name: string): ImageExtension => {
 export const parseProcessFormData = async (formData: FormData): Promise<ProcessInput> => {
   const parsed = requestSchema.safeParse({
     mode: formData.get("mode"),
+    outputFormat: formData.get("outputFormat"),
     cx: formData.get("cx"),
     cy: formData.get("cy"),
     width: formData.get("width"),
@@ -109,6 +115,7 @@ export const parseProcessFormData = async (formData: FormData): Promise<ProcessI
     bytes,
     extension,
     mode: parsed.data.mode,
+    outputFormat: parsed.data.outputFormat,
     box: { cx: parsed.data.cx, cy: parsed.data.cy, width: parsed.data.width, height: parsed.data.height },
     processingCode: parsed.data.processingCode,
   };

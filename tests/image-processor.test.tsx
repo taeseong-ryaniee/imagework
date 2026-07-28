@@ -19,6 +19,12 @@ const zipResponse = (): Response => new Response(new Uint8Array([80, 75, 3, 4]),
     "Content-Type": "application/zip",
   },
 });
+const pngResponse = (): Response => new Response(new Uint8Array([137, 80, 78, 71]), {
+  headers: {
+    "Content-Disposition": 'attachment; filename="result.png"',
+    "Content-Type": "image/png",
+  },
+});
 const processJobId = "9bc368f7-0f53-4ebd-80c2-1d1bdfe94c98";
 
 const chooseValidImage = async (): Promise<void> => {
@@ -33,10 +39,11 @@ describe("ImageProcessor", () => {
   beforeEach(() => {
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => processJobId) });
     vi.stubGlobal("Image", TestImage);
-    vi.stubGlobal("URL", {
-      createObjectURL: vi.fn(() => "blob:imagework-test"),
-      revokeObjectURL: vi.fn(),
-    });
+    const TestUrl = class extends URL {
+      static createObjectURL = vi.fn(() => "blob:imagework-test");
+      static revokeObjectURL = vi.fn();
+    };
+    vi.stubGlobal("URL", TestUrl);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   });
 
@@ -53,7 +60,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const [path, options] = fetchMock.mock.calls[0] ?? [];
@@ -64,6 +71,7 @@ describe("ImageProcessor", () => {
     if (!(options?.body instanceof FormData)) throw new Error("FormData request body was expected.");
     expect(options.body.get("file")).toBeInstanceOf(File);
     expect(options.body.get("mode")).toBe("logo");
+    expect(options.body.get("outputFormat")).toBe("zip");
     expect(options.body.get("cx")).toBe("0.5");
     expect(options.body.get("cy")).toBe("0.5");
     expect(options.body.get("width")).toBe("1");
@@ -72,21 +80,109 @@ describe("ImageProcessor", () => {
     expect(options.body.get("processingCode")).toBe("shared-processing-code");
   });
 
+  it("sends a PNG selection and downloads the single transparent PNG response", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(pngResponse());
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.click(screen.getByLabelText("PNG"));
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+    const options = fetchMock.mock.calls[0]?.[1];
+    if (!(options?.body instanceof FormData)) throw new Error("FormData request body was expected.");
+    expect(options.body.get("outputFormat")).toBe("png");
+  });
+
+  it("disables SVG-only output and restores PNG when photo mode is selected", async () => {
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.click(screen.getByLabelText("SVG"));
+    fireEvent.click(screen.getByLabelText("사진"));
+
+    const svg = screen.getByLabelText("SVG");
+    const png = screen.getByLabelText("PNG");
+    if (!(svg instanceof HTMLInputElement) || !(png instanceof HTMLInputElement)) throw new Error("Output format controls were expected.");
+    expect(svg.disabled).toBe(true);
+    expect(png.checked).toBe(true);
+  });
+
+  it("synchronizes a dragged image selection with normalized box fields", async () => {
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    const cropper = screen.getByLabelText("이미지에서 대상 영역 지정");
+    vi.spyOn(cropper, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 100));
+
+    fireEvent.pointerDown(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(cropper, { clientX: 120, clientY: 70 });
+    fireEvent.pointerUp(cropper, { clientX: 120, clientY: 70 });
+
+    const centerX = screen.getByRole("spinbutton", { name: "중심 X" });
+    const centerY = screen.getByRole("spinbutton", { name: "중심 Y" });
+    const width = screen.getByRole("spinbutton", { name: "너비" });
+    const height = screen.getByRole("spinbutton", { name: "높이" });
+    if (!(centerX instanceof HTMLInputElement) || !(centerY instanceof HTMLInputElement) || !(width instanceof HTMLInputElement) || !(height instanceof HTMLInputElement)) throw new Error("Normalized box fields were expected.");
+    expect(centerX.value).toBe("0.35");
+    expect(centerY.value).toBe("0.45");
+    expect(width.value).toBe("0.5");
+    expect(height.value).toBe("0.5");
+  });
+
+  it("restores the last box when a crop drag is cancelled", async () => {
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    const cropper = screen.getByLabelText("이미지에서 대상 영역 지정");
+    vi.spyOn(cropper, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 100));
+
+    fireEvent.pointerDown(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.pointerCancel(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(cropper, { clientX: 120, clientY: 70 });
+
+    const values = ["중심 X", "중심 Y", "너비", "높이"].map((name) => screen.getByRole("spinbutton", { name }));
+    if (!values.every((value): value is HTMLInputElement => value instanceof HTMLInputElement)) throw new Error("Normalized box fields were expected.");
+    expect(values.map((value) => value.value)).toEqual(["0.5", "0.5", "1", "1"]);
+  });
+
+  it("restores the last box when crop pointer capture is lost", async () => {
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    const cropper = screen.getByLabelText("이미지에서 대상 영역 지정");
+    vi.spyOn(cropper, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 200, 100));
+
+    fireEvent.pointerDown(cropper, { clientX: 20, clientY: 20 });
+    fireEvent.lostPointerCapture(cropper);
+
+    const values = ["중심 X", "중심 Y", "너비", "높이"].map((name) => screen.getByRole("spinbutton", { name }));
+    if (!values.every((value): value is HTMLInputElement => value instanceof HTMLInputElement)) throw new Error("Normalized box fields were expected.");
+    expect(values.map((value) => value.value)).toEqual(["0.5", "0.5", "1", "1"]);
+  });
+
   it("downloads a valid ZIP response and releases its object URL", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(zipResponse());
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const createObjectUrl = vi.fn(() => "blob:imagework-result");
     const revokeObjectUrl = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("URL", { createObjectURL: createObjectUrl, revokeObjectURL: revokeObjectUrl });
+    const ResultUrl = class extends URL {
+      static createObjectURL = createObjectUrl;
+      static revokeObjectURL = revokeObjectUrl;
+    };
+    vi.stubGlobal("URL", ResultUrl);
     render(<ImageProcessor />);
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
 
     await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
-    expect(createObjectUrl).toHaveBeenCalledTimes(2);
+    expect(createObjectUrl).toHaveBeenCalledTimes(3);
     expect(createObjectUrl).toHaveBeenLastCalledWith(expect.any(Blob));
     expect(revokeObjectUrl).toHaveBeenLastCalledWith("blob:imagework-result");
   });
@@ -97,7 +193,7 @@ describe("ImageProcessor", () => {
     render(<ImageProcessor />);
 
     await chooseValidImage();
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
 
     expect(screen.getByText("작업 코드를 입력해 주세요.")).not.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -112,7 +208,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "invalid-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("입력값을 다시 확인해 주세요.");
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
@@ -133,7 +229,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
     fireEvent.click(await screen.findByRole("button", { name: "작업 취소" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -156,7 +252,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
     fireEvent.click(await screen.findByRole("button", { name: "작업 취소" }));
 
     expect(screen.getByRole("button", { name: "취소 요청을 전송하고 있습니다" }).hasAttribute("disabled")).toBe(true);
@@ -177,7 +273,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
     fireEvent.click(await screen.findByRole("button", { name: "작업 취소" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("취소 요청 확인을 받지 못했으므로");
@@ -193,7 +289,7 @@ describe("ImageProcessor", () => {
 
     await chooseValidImage();
     fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "투명 ZIP 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("네트워크 또는 작업자 연결");
     fireEvent.click(screen.getByRole("button", { name: "다시 시도하기" }));

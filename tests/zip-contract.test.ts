@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertExpectedArchive } from "../lib/zip-contract";
+import { assertExpectedArchive, extractRequestedResult } from "../lib/zip-contract";
 
 const temporaryPaths: string[] = [];
 
@@ -106,5 +106,20 @@ describe("returned ZIP bytes", () => {
     }));
 
     await expect(assertExpectedArchive(path, "logo")).resolves.toBeUndefined();
+  });
+
+  it("extracts only the selected validated PNG or SVG member", async () => {
+    const png = transparentPng();
+    const svg = Buffer.from("<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 2 1\"><path fill=\"#000\" d=\"M0 0h1v1H0z\"/></svg>");
+    const path = await writeArchive(archive({ "result.png": png, "result.svg": svg }));
+
+    await expect(extractRequestedResult(path, "logo", "png")).resolves.toMatchObject({ bytes: png, contentType: "image/png", name: "result.png" });
+    await expect(extractRequestedResult(path, "logo", "svg")).resolves.toMatchObject({ bytes: svg, contentType: "image/svg+xml", name: "result.svg" });
+  });
+
+  it("never extracts SVG for a photo job", async () => {
+    const path = await writeArchive(archive({ "result.png": transparentPng() }));
+
+    await expect(extractRequestedResult(path, "photo", "svg")).rejects.toMatchObject({ name: "ResultContractError" });
   });
 });
