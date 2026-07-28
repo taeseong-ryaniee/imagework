@@ -33,12 +33,12 @@ const cancelRequest = (id: string, code = processingCode): Request => new Reques
   headers: { "Content-Type": "application/json" },
 });
 
-const processRequest = (id: string, processingHeader = processingCode, contentLength?: string): Request => {
+const processRequest = (id: string, processingHeader = processingCode, contentLength?: string, outputFormat: "png" | "svg" | "zip" = "zip"): Request => {
   const formData = new FormData();
   formData.set("jobId", id);
   formData.set("file", new File([png], "source.png", { type: "image/png" }));
   formData.set("mode", "photo");
-  formData.set("outputFormat", "zip");
+  formData.set("outputFormat", outputFormat);
   formData.set("cx", "0.5");
   formData.set("cy", "0.5");
   formData.set("width", "0.8");
@@ -76,6 +76,12 @@ class ControlledRunner {
 class QueueFullRunner {
   async run(): Promise<{ readonly name: "imagework-results.zip"; readonly bytes: Buffer; readonly contentType: "application/zip" }> {
     throw new QueueCapacityError();
+  }
+}
+
+class PngRunner {
+  async run(): Promise<{ readonly name: "result.png"; readonly bytes: Buffer; readonly contentType: "image/png" }> {
+    return { name: "result.png", bytes: Buffer.from([137, 80, 78, 71]), contentType: "image/png" };
   }
 }
 
@@ -139,6 +145,16 @@ describe("explicit process cancellation", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     }
+  });
+
+  it("returns the runner's own content type and filename for a non-ZIP output request", async () => {
+    const registry = new ProcessJobRegistry();
+    const process = createProcessHandler(() => new PngRunner(), registry, () => config);
+
+    const response = await process(processRequest(jobId, processingCode, undefined, "png"));
+
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(response.headers.get("Content-Disposition")).toContain("result.png");
   });
 
   it("uses the cancel endpoint to abort an active job through cleanup and stop", async () => {

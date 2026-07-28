@@ -359,6 +359,40 @@ describe("ColabJobRunner", () => {
     expect(runIndex).toBeGreaterThan(tokenUploadIndex);
   });
 
+  it("returns only the requested PNG member and its content type for a png output format", async () => {
+    const config = await configFor();
+    const runner = new ColabJobRunner(config, new FakeCommands());
+
+    const result = await runner.run({
+      bytes: png,
+      extension: ".png",
+      mode: "logo",
+      box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "png" as const,
+    });
+
+    expect(result.name).toBe("result.png");
+    expect(result.contentType).toBe("image/png");
+    expect([...result.bytes]).toEqual([...contentFor("result.png")]);
+  });
+
+  it("returns only the requested SVG member and its content type for an svg output format", async () => {
+    const config = await configFor();
+    const runner = new ColabJobRunner(config, new FakeCommands());
+
+    const result = await runner.run({
+      bytes: png,
+      extension: ".png",
+      mode: "logo",
+      box: { cx: 0.5, cy: 0.5, width: 0.8, height: 0.8 },
+      processingCode: "0123456789abcdef0123456789abcdef", outputFormat: "svg" as const,
+    });
+
+    expect(result.name).toBe("result.svg");
+    expect(result.contentType).toBe("image/svg+xml");
+    expect([...result.bytes]).toEqual([...contentFor("result.svg")]);
+  });
+
   it("rejects an unexpected ZIP member and removes the job state", async () => {
     const config = await configFor();
     const runner = new ColabJobRunner(config, new FakeCommands(makeZip(["result.png", "unexpected.txt"])));

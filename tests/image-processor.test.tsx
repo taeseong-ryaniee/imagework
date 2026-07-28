@@ -97,6 +97,19 @@ describe("ImageProcessor", () => {
     expect(options.body.get("outputFormat")).toBe("png");
   });
 
+  it("surfaces a recoverable error when the server response format doesn't match the selected output format", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(zipResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.click(screen.getByLabelText("PNG"));
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("서버가 선택한 형식의 결과를 반환하지 않았습니다");
+  });
+
   it("disables SVG-only output and restores PNG when photo mode is selected", async () => {
     render(<ImageProcessor />);
 
