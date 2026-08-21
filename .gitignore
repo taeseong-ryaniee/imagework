@@ -21,15 +21,6 @@
 /.omo/
 /.hermes/
 
-# generated Colab artifacts (the canonical notebook and results template are intended for tracking)
-/colab/output/
-/colab/outputs/
-/colab/results/
-/colab/result.png
-/colab/result.svg
-/colab/result*.zip
-/colab/imagework-results-*.zip
-
 # production
 /build
 
@@ -57,3 +48,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# wave DB (derived — not tracked)
+.wave/wave.db
+.wave/wave.db-*
