@@ -155,3 +155,65 @@ grep -n -F -- 'iopath 0.1.10' runner/LOCKS.md — 24:metadata. iopath 0.1.10 pub
 
 sed -n '227p' ~/.gstack/projects/taeseong-ryaniee-imagework/taeseongyi-main-design-20260720-182557.md — ### 프로비저닝 (1회, scripts/provision-worker.sh 신규) — [GATE] Q2 의 출처 "설계 문서 227행 '프로비저닝 0단계'(이미 재실행 지점을 정의)" 중 줄 포인터를 반박(r5 신규, [RED r4] N5). 227행은 절 제목이고 인용한 내용은 다른 두 줄에 있다 — sed -n '250p' = "- **(c) 프로비저닝 0단계 드라이버 검사**: 위 프로비저닝 0단계에 통합 ...", sed -n '284p' = "... (b) torch/torchvision CUDA 휠 해시 고정 가능성 검증(프로비저닝 0단계), NVIDIA 드라이버/CUDA 버전 확인(D21c)이 함께 기록됨." 답변 (C) 자체는 문서 내용과 일치하므로 계획은 바꾸지 않고 출처 줄 포인터만 정정한다. 같은 GATE 행의 Q5 인용 2건(263·349행)은 정확히 일치했다.
 ```
+
+
+[PLAN r6 cont.1]
+
+## red_response
+
+`[RED r5]` 는 블로커 1건(B1)과 노트 4건(N1~N4)을 냈다. 블로커 1건과 노트 4건 **전부**에 조치했고, 실질 편집은 이슈 2건(`OW-203` · `OW-206`)에 들어갔다. 나머지 9건은 무수정이다. 2건 다 Linear 왕복 대조로 저장본이 전송본과 바이트 일치함을 확인했다(말미 개행 1바이트 제외).
+
+### 블로커 B1 — `OW-203` 이 구 러너 클래스 참조 5곳 중 1곳만 교체 지시
+
+| 항목 | 내용 |
+|---|---|
+| RED 지적 | `app/api/process/route.ts` 는 구 러너 클래스 식별자를 5곳에서 참조하는데(1행 import · 9행 타입 별칭 · 53행 싱글턴 변수 · 55행 팩토리 반환 타입 · 56행 생성자 호출) `OW-203` 2-1 은 1행 import 만 앵커로 지목했다. 모듈 지정자만 바꾸면 새 모듈에 없는 이름을 4곳이 계속 참조해 `OW-205` 의 라우트 임포트 테스트와 `OW-210` 의 `npx tsc --noEmit` 이 함께 깨지고, 4곳 전부 대소문자 무시 `colab` 히트라 제공요건 23 이 `OW-210` 까지 밀린다 |
+| 조치 | `fix_instruction` 그대로 실행 — (1) 2-1 을 (1)·(2) 두 단계로 재작성해 나머지 4곳을 **펜스 앵커 4개**로 명시, (2) 교체 이름을 스펙에 하드코딩하지 않고 `OW-202` 의 `## Decisions` 코멘트를 정본으로 지정하며 읽는 명령까지 적음, (3) `## 1. Preconditions` 에 4개 앵커의 생존 검사 4줄 추가(각 기대 1 / 종료 0), (4) 2-1 검증 블록에 완료 판정 1줄 추가(구 클래스 식별자 0건 / exit=1), (5) dispatch table `OW-203` `anchors` 에 4건 승격 |
+| 추가 조치 | `fix_instruction` 이 지목하지 않은 세 구멍을 함께 닫았다 — (a) 2-1 에 `Colab` 대문자 0건 완료 판정 1줄 추가(식별자 4곳 + 한국어 문구까지 한 번에 잡는다), (b) `OW-202` 2-2b 와 같은 클래스의 **상한 게이트** 신설 — 편집 후 이 파일의 소문자 `colab` 히트가 정확히 2 이고 그 2건이 살아남는 모듈 import 2줄과 같은 수여야 하며 초과분은 이 태스크가 지운다, (c) §3 「손대지 않는 영역」에 그 import 2건의 **경로** 를 명시해 상한 게이트의 허용값과 §3 을 일치시켰다 |
+| 측정 | 5개 문자열 전부 저장소 전역 유일이다 — `git grep -I -c -F` 가 각각 `app/api/process/route.ts:1`. 편집 전 이 파일의 `grep -ci colab` = 8, 그중 살아남는 것은 `grep -cE 'from "@/lib/colab-(errors|input)"'` = 2 이므로 상한 게이트의 기대값 2 가 성립한다. 대조군인 `app/api/process/cancel/route.ts` 는 구 러너 클래스를 참조하지 않아 2-4 의 import 교체 지시만으로 충분하다는 RED 판정도 재현했다 |
+| deps · target_files | 변경 없음 — `OW-202` 가 이미 `deps` 에 있고 `lib/local-job-runner.ts` 가 `write: false` 로 등재돼 있다. 상한 게이트가 허용하는 2건은 읽기만 하는 기존 import 이라 새 경로가 생기지 않는다 |
+
+B1 조치가 승격한 앵커와 그 계수(커밋 `7b3e205`):
+
+```
+type Runner = Pick<ColabJobRunner, "run">; — 1 — app/api/process/route.ts
+let serverRunner: ColabJobRunner | undefined; — 1 — app/api/process/route.ts
+const runnerFromEnvironment = (): ColabJobRunner => { — 1 — app/api/process/route.ts
+if (!serverRunner) serverRunner = new ColabJobRunner(parseRunnerConfig(process.env)); — 1 — app/api/process/route.ts
+```
+
+### 노트 4건
+
+| 노트 | 조치 | 측정 |
+|---|---|---|
+| N1 `OW-203` — 2-1 이 교체 대상으로 지목한 한국어 문구가 인라인 인용이고 전제조건 검사가 없음 | 그 문구를 인라인 인용에서 빼내 **교체 전 / 교체 후 두 펜스 앵커**로 다시 적고, `## 1. Preconditions` 에 생존 검사 1줄(기대 1 / 종료 0)을 추가했다. dispatch table `OW-203` `anchors` 와 `## new_anchors` 에도 승격했다. 이로써 이 웨이브의 편집 대상 문자열 중 인라인 백틱으로만 지시된 항목은 0건이다 | `grep -cF` = 1, 종료 0. 저장소 전역에서도 `app/api/process/route.ts:1` |
+| N2 `OW-206` — 2-6 의 "링크 2건" 개수 단언에 대응 검사 없음 | `## 1. Preconditions` 펜스에 개수 확인 1줄을 추가해 같은 절의 `check:colab-notebook` 2건 검사와 처리를 맞췄다. 2-6 본문은 무수정이다(개수 단언이 실측과 일치하므로 정정 대상이 아니다) | `grep -cF -- 'docs/colab-results.md' README.md` = 2, 종료 0(89행 영문 절 · 153행 한국어 절) |
+| N3 `[ANALYZE]` `non_git_paths` 행 ↔ `[PLAN]` `## refutations` 불일치가 라운드 3~5 잔존 | 계획은 바꾸지 않는다 — RED 자신이 "재측정으로 위험 없음 · `irreversible: false` 타당" 으로 판정했고 `OW-200` 의 비-git 경로는 같은 실행이 만든 임시 디렉터리 하나뿐이다. 현행 처리(반박을 `## refutations` 로 넘김)를 이번 라운드에도 유지하며, 이 코멘트가 그 판단을 기록으로 남긴다. `[ANALYZE]` 코멘트 자체는 이 노드가 고칠 수 없다(코멘트 수정 verb 없음) — 다음 웨이브의 노드 1이 `non_git_paths` 를 승계하지 않도록 하는 것은 그 노드의 입력 체크리스트 몫이다 | 이번 라운드 재측정 없음. 근거는 `[RED r5]` A4 결과와 `[PLAN r5]` `## refutations` 2번 항목 |
+| N4 `OW-206` §3 의 `README.md` 항목이 공허함 | §3 「이 태스크 대상 파일 중 손대지 않는 영역」의 해당 항목에서 `README.md` 를 빼고 `CLAUDE.md` 만 남겼다. 그 자리에 "`README.md` 는 이 항목의 대상이 아니다 — 두 모듈 파일명 표기가 0건이라 2-6 의 `colab` 0건 요구에서 면제되는 잔재가 하나도 없다" 를 측정 명령 펜스와 함께 적어, 워커가 §3 을 근거로 `README.md` 의 잔재를 남길 여지를 없앴다 | `grep -c -E 'lib/colab-(input\|errors)\.ts' README.md` = 0, 종료 1. 같은 표기는 `CLAUDE.md` 31·35행 2건 |
+
+### 구조 (변경 없음)
+
+`[GATE r2]` 가 지시한 `OW-210` 전역 백스톱 구조는 라운드 4에서 확정한 그대로다 — 2-1 체크 세트 5종 + 2-2 전역 스윕 2건, 스윕이 지목한 경로에 한정된 사후 수정 권한, `target_files` 무확장. 이번 라운드가 추가한 판정 3건(`OW-203` 의 구 클래스 식별자 0건 · `Colab` 대문자 0건 · 소문자 `colab` 상한 게이트)은 전부 1차 방어선이고 2차는 여전히 `OW-210` 이다. 이로써 상한 게이트를 가진 파일은 `lib/local-job-runner.ts`(`OW-202` 2-2b)와 `app/api/process/route.ts`(`OW-203` 2-1) 2건이 됐다.
+
+§4 check 4(공유-쓰기 순서)를 이번 라운드에도 확인했다 — `target_files` 와 `deps` 는 한 건도 바뀌지 않았고, 바뀐 것은 `OW-203` 의 `anchors` 배열(6 → 11)과 이슈 2건의 본문뿐이다. `[RED r5]` A3 이 계측한 공유-쓰기 쌍 87건 전부 순서 있음 · 미정렬 0건 · 폐포 크기 11건이 그대로 유효하다.
+
+## requirement_map
+
+`[ANALYZE]` 25항 + `[GATE]` 26·27항 전부 매핑. 라운드 4·5에서 확정한 소유자와 동일하다 — 이번 라운드는 태스크를 신설하거나 폐기하지 않았고 `target_files` 도 바꾸지 않았다.
+
+```
+1 → OW-200        2 → OW-200        3 → OW-201        4 → OW-201
+5 → OW-201        6 → OW-201        7 → OW-201        8 → OW-201
+9 → OW-202       10 → OW-202       11 → OW-203       12 → OW-203
+13 → OW-203      15 → OW-204       16 → OW-203       17 → OW-206
+18 → OW-207      19 → OW-206       20 → OW-206       22 → OW-208
+24 → OW-205 · OW-210               25 → OW-210
+14 → OW-203 · OW-206 · OW-210
+21 → OW-206 · OW-209
+23 → OW-200 · OW-201 · OW-202 · OW-203 · OW-204 · OW-206 · OW-207 · OW-208 · OW-209 · OW-210
+26 → OW-202 · OW-203               27 → OW-204 · OW-209
+```
+
+GATE 확정 답변 5건도 전부 태스크로 내려가 있다 — Q1(A) → `OW-201` · `OW-207` 의 `py_compile` / `bash -n` 판정, Q2(C) → `OW-200`, Q3 T23·T24 편입 → `OW-202` · `OW-203` · `OW-204` · `OW-209`, Q4(A) → `OW-208` · `OW-209`, Q5(B) 120s·400 고정 + burst·드라이버 임계값 위임 → `OW-206` · `OW-207`. `[GATE r2]` 의 구조 지시는 `OW-210` 2-2 가 소유한다.
+
+전역 불변식 2건의 소유 사슬 — 제공요건 14 는 1차 `OW-203`(자기 파일) · `OW-206`(`CLAUDE.md`), 2차 `OW-210`. 제공요건 23 은 1차 `OW-200` · `OW-201` · `OW-202` · `OW-203`(이번 라운드 신설 상한 게이트) · `OW-204` · `OW-206` · `OW-207` · `OW-208` · `OW-209`(각자 자기 파일), 2차 `OW-210`. 위 매핑 줄의 23항은 라운드 5에서 이 문단이 이미 열거하던 `OW-202` · `OW-204` 를 함께 적어 두 서술을 일치시킨 것이고, `OW-203` 은 이번 라운드가 그 파일에 상한 게이트를 넣으면서 1차 방어선 소유자로 새로 편입됐다. 소유자 집합의 실질 확장은 `OW-203` 1건뿐이다.

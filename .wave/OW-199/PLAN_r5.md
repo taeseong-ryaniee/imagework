@@ -150,3 +150,58 @@ grep -n -F -- 'iopath 0.1.10' runner/LOCKS.md — 24:metadata. iopath 0.1.10 pub
 
 sed -n '227p' ~/.gstack/projects/taeseong-ryaniee-imagework/taeseongyi-main-design-20260720-182557.md — ### 프로비저닝 (1회, scripts/provision-worker.sh 신규) — [GATE] Q2 의 출처 "설계 문서 227행 '프로비저닝 0단계'(이미 재실행 지점을 정의)" 중 줄 포인터를 반박(r5 신규, [RED r4] N5). 227행은 절 제목이고 인용한 내용은 다른 두 줄에 있다 — sed -n '250p' = "- **(c) 프로비저닝 0단계 드라이버 검사**: 위 프로비저닝 0단계에 통합 ...", sed -n '284p' = "... (b) torch/torchvision CUDA 휠 해시 고정 가능성 검증(프로비저닝 0단계), NVIDIA 드라이버/CUDA 버전 확인(D21c)이 함께 기록됨." 답변 (C) 자체는 문서 내용과 일치하므로 계획은 바꾸지 않고 출처 줄 포인터만 정정한다. 같은 GATE 행의 Q5 인용 2건(263·349행)은 정확히 일치했다.
 ```
+
+
+[PLAN r5 cont.1]
+
+## red_response
+
+`[RED r4]` 는 블로커 1건(B1)과 노트 6건(N1~N6)을 냈다. 블로커 1건과 노트 6건 **전부**에 조치했고, 실질 편집은 이슈 4건(`OW-200` · `OW-202` · `OW-205` · `OW-209`)에 들어갔다. 나머지 7건은 무수정이다. 4건 전부 Linear 왕복 대조(`cmp`)로 바이트 일치를 확인했다.
+
+### 블로커 B1 — OW-205 가 구 모듈에서 `parseRunnerConfig` 를 임포트한 채 남음
+
+| 항목 | 내용 |
+|---|---|
+| RED 지적 | `tests/process-cancel.test.ts` 4행이 `../lib/colab-job-runner` 에서 `parseRunnerConfig` 를 임포트하고 16행 모듈 최상위에서 호출한다. 구 zod 스키마가 폐기 키를 `.optional()` 없이 필수로 요구하므로 fake 만 고치면 파일이 로드 시점에 떨어지고, `OW-208` 삭제 후에는 미해결 모듈이 된다. 구 모듈 임포터 4건 중 이 파일만 재지정 지시가 없었다 |
+| 조치 | `fix_instruction` 그대로 실행 — (1) `OW-205` 2-4 에 임포트 교체를 펜스 앵커 2개(교체 전 / 교체 후)로 명시, (2) 같은 절에 fake `RunnerConfig` 재구성 지시(폐기 7종 삭제 · 신규 5종 추가 · `IMAGEWORK_JOB_TIMEOUT_SECONDS` 를 30~600 안으로) 와 함께 `OW-202` 의 `## Decisions` 코멘트를 정본으로 지정, (3) `## 1. Preconditions` 에 임포트 앵커 생존 검사 1줄(기대 1 / 종료 0) 추가, (4) dispatch table `OW-205` `anchors` 에 그 앵커 승격 |
+| 추가 조치 | `fix_instruction` 이 지목하지 않은 두 구멍을 함께 닫았다 — (a) 2-4 에 완료 판정 2줄 신설(폐기 7종 정규식 0건 / `lib/colab-job-runner` 문자열 0건), (b) `OW-202` 2-3 의 `## Decisions` 에 환경 변수 스키마 전문(제거 7 · 추가 5 · 유지 3 · 변경 1의 키·기본값·zod 범위)을 적도록 의무화. (b) 가 없으면 `OW-205` 가 읽으라고 지시받은 채널에 정작 그 값이 실려 있지 않다 |
+| 측정 | `grep -cF -- 'import { parseRunnerConfig } from "../lib/colab-job-runner";' tests/process-cancel.test.ts` = 1, 종료 0. 폐기 키는 4종이 아니라 **7종 전부**가 이 파일에 각각 1건씩 실재한다 — `grep -cE 'IMAGEWORK_(HF_TOKEN\|JOB_SCRIPT\|RECOVERY_ROOT\|GOOGLE_APPLICATION_CREDENTIALS\|COLAB_AUTH_MODE\|COLAB_CONFIG\|COLAB_ACCELERATOR)' tests/process-cancel.test.ts` = 7. 라운드 4 스펙에 적힌 "4" 는 4종만 담은 좁은 정규식의 값이었고, 스펙 본문을 7종 기준으로 고쳤다. `IMAGEWORK_JOB_TIMEOUT_SECONDS` 는 `"60"` 이라 새 범위 안이므로 값 변경이 필요 없다는 사실도 스펙에 적었다 |
+| deps · target_files | 변경 없음 — RED 가 확인한 대로 `OW-202` 가 이미 `deps` 에 있고 `lib/local-job-runner.ts` 가 `write: false` 로 등재돼 있다 |
+
+### 노트 6건
+
+| 노트 | 조치 | 측정 |
+|---|---|---|
+| N1 `OW-200` — 편집 위치를 줄 번호로 지시 + 인용이 `...` 로 잘림 | 2-1 의 "출발점 파일 3행의 주석" 표현을 지우고 주석 **전문**을 펜스 블록 앵커로 넣었다. `## 1. Preconditions` 에 `grep -cF` 검사 1줄(기대 1 / 종료 0)을 추가하고 dispatch table `OW-200` `anchors` 에 승격했다. 이로써 웨이브 안의 줄 번호 지시는 0건이다 | `grep -cF -- '# Torch, torchvision, numpy<2, and Pillow are Colab base-runtime invariants and are preflighted separately.' runner/sam3-requirements.lock` = 1, 종료 0 |
+| N2 `OW-205` — `ImageProcessor` 임포트 앵커가 저장소 전역에서 유일하지 않음 | 전제조건 블록 뒤에 파일 스코프 고정 문단을 넣었다 — 앵커를 전역으로 잡지 말고 언제나 `tests/image-processor.test.tsx` 를 지정해 grep 하며, `app/page.tsx` 는 `OW-204` 의 쓰기 대상이라 §3 대로 한 글자도 건드리지 않는다. `## new_anchors` 표기에도 2 files 사실을 병기했다 | `git grep -c -F` 결과가 `app/page.tsx:1` · `tests/image-processor.test.tsx:1` 2 files |
+| N3 `[PLAN r4]` 코멘트의 코드 펜스가 홀수 | 이번 라운드 코멘트를 펜스 짝수로 생성했다 — 절 제목 4개(`## dispatch table` · `## new_anchors` · `## source_reads` · `## refutations`)는 전부 펜스 **밖**이고, 각 절의 목록만 펜스 안이다 | `[PLAN r5]` 본문의 `grep -c '^` + 백틱 3개 = 8 (짝수), 게시 전 생성 스크립트가 계수 |
+| N4 `OW-202` — 신규 `lib/local-job-runner.ts` 에 `colab` 계측 부재 | RED 가 제안한 **상한 게이트**를 2-2b 절로 신설했다 — `grep -in colab lib/local-job-runner.ts` 히트가 2줄 이하이고 그 전부가 `./colab-errors` · `./colab-input` import 줄이어야 하며, import 가 아닌 히트는 그 줄을 고쳐 지우고 다시 센다. 1차 방어선임을 명시하고 `OW-209` 의 rename 과 `OW-210` 의 전역 스윕을 2·3차 방어선으로 적었다 | `grep -ci colab lib/colab-job-runner.ts` = 37. 정당한 import 는 `grep -n -E 'from "./colab-(errors\|input)"' lib/colab-job-runner.ts` = 6행 · 7행 정확히 2건 |
+| N5 `[GATE]` Q2 의 출처 줄 포인터가 절 제목을 가리킴 | 계획은 바꾸지 않는다 — 답변 (C) 자체는 문서 내용과 일치한다. `## refutations` 에 측정과 함께 정정 항목 1건을 추가했다 | `sed -n '227p'` = `### 프로비저닝 (1회, scripts/provision-worker.sh 신규)`. 인용한 내용은 250행과 284행에 있다 |
+| N6 `OW-209` §3 금지 행위 ↔ 2-2 조건부 지시 충돌 | 금지 행위 줄에 예외를 명시했다 — "예외는 2-2 의 조건부 대상 1건(`tests/remote-worker-contract.test.ts`)뿐이며, 그 파일에 `colab` 이 남아 있을 때만 2-2 와 §3 「조건부 대상」이 정한 범위대로 해당 어서션을 대체한다". 금지 행위 목록만 읽고 판단하는 워커도 이제 예외를 본다 | 현재 `grep -ci colab tests/remote-worker-contract.test.ts` = 3, 전부 `colab_runtime_versions` 어서션이라 `OW-201` 이 제 몫을 하면 이 조건부 경로는 발동하지 않는다 |
+
+### 구조 (변경 없음)
+
+`[GATE r2]` 가 지시한 OW-210 전역 백스톱 구조는 라운드 4에서 확정한 그대로다 — 2-1 체크 세트 5종 + 2-2 전역 스윕 2건(`git grep -ri colab` 0건, `git grep -F 'AbortSignal.any'` 0건), 스윕이 지목한 경로에 한정된 사후 수정 권한 4개 조건, `target_files` 무확장. 이번 라운드가 추가한 로컬 판정 2건(`OW-202` 2-2b 상한 게이트, `OW-205` 2-4 완료 판정)도 전부 1차 방어선이고 2차는 여전히 OW-210 이다.
+
+§4 check 4(공유-쓰기 순서)를 이번 라운드에도 직접 계측했다 — `target_files` 는 한 건도 바뀌지 않았고, `deps` 이행 폐포에서 공유-쓰기 쌍 **87건 전부 순서 있음, 미정렬 0건**이다. 폐포 크기는 OW-200 0 · OW-201 1 · OW-202 0 · OW-203 1 · OW-204 2 · OW-205 3 · OW-206 0 · OW-207 2 · OW-208 8 · OW-209 9 · OW-210 10 으로 라운드 4와 동일하며, OW-210 은 여전히 웨이브의 유일한 싱크 노드다.
+
+## requirement_map
+
+`[ANALYZE]` 25항 + `[GATE]` 26·27항 전부 매핑. 라운드 4에서 확정한 소유자와 동일하다 — 이번 라운드는 태스크를 신설하거나 폐기하지 않았고 `target_files` 도 바꾸지 않았다.
+
+```
+1 → OW-200        2 → OW-200        3 → OW-201        4 → OW-201
+5 → OW-201        6 → OW-201        7 → OW-201        8 → OW-201
+9 → OW-202       10 → OW-202       11 → OW-203       12 → OW-203
+13 → OW-203      15 → OW-204       16 → OW-203       17 → OW-206
+18 → OW-207      19 → OW-206       20 → OW-206       22 → OW-208
+24 → OW-205 · OW-210               25 → OW-210
+14 → OW-203 · OW-206 · OW-210
+21 → OW-206 · OW-209
+23 → OW-200 · OW-201 · OW-206 · OW-207 · OW-208 · OW-209 · OW-210
+26 → OW-202 · OW-203               27 → OW-204 · OW-209
+```
+
+GATE 확정 답변 5건도 전부 태스크로 내려가 있다 — Q1(A) → `OW-201` · `OW-207` 의 `py_compile` / `bash -n` 판정, Q2(C) → `OW-200`, Q3 T23·T24 편입 → `OW-202` · `OW-203` · `OW-204` · `OW-209`, Q4(A) → `OW-208` · `OW-209`, Q5(B) 120s·400 고정 + burst·드라이버 임계값 위임 → `OW-206` · `OW-207`. `[GATE r2]` 의 구조 지시는 `OW-210` 2-2 가 소유한다.
+
+전역 불변식 2건의 소유 사슬 — 제공요건 14 는 1차 `OW-203`(자기 파일) · `OW-206`(`CLAUDE.md`), 2차 `OW-210`. 제공요건 23 은 1차 `OW-200` · `OW-201` · `OW-202`(이번 라운드 신설 상한 게이트) · `OW-204` · `OW-206` · `OW-207` · `OW-208` · `OW-209`(각자 자기 파일), 2차 `OW-210`.

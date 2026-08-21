@@ -140,3 +140,63 @@ grep -cF -- 'iopath==0.1.10' runner/sam3-requirements.lock — 1 — [GATE] Q2 (
 
 grep -n -F -- 'iopath 0.1.10' runner/LOCKS.md — 24:metadata. iopath 0.1.10 publishes only a source distribution; its exact — [GATE] Q4 (A) 의 sam3-build-requirements.lock 삭제를 부분 반박. 빌드 툴 락은 소스 전용 iopath 를 --no-build-isolation 으로 설치하기 위한 선행 계약이라 로컬 전환 후에도 살아 있다. 옛 파일 삭제는 유지하되 로컬 대응물 runner/sam3-local-build-requirements.lock 신설을 OW-200 에, 2단계 설치 순서를 OW-207 1단계에 넣었다.
 ```
+
+
+[PLAN r4 cont.1]
+
+## red_response
+
+실질 편집 8건(OW-200·201·203·204·205·206·207·210), 무수정 3건(OW-202·208·209). 8건 전부 Linear 왕복 대조(`cmp`) 바이트 일치 확인.
+
+### 구조 변경 — `[GATE r2]` 지시
+
+`[GATE r2]` 는 r1·r2·r3 3라운드 연속 블로커의 공통 근본 원인을 "전역 불변식(제공요건 14·23)을 분산 소유로 검증하는 구조" 로 지목하고, **OW-210 을 전역 백스톱으로 재구조** 하라고 지시했다. 그대로 실행했다.
+
+* OW-210 `## 2. Change` 를 2-1(체크 세트 5종)과 **2-2(전역 스윕 2건)** 로 나누고, 2-2 를 이 태스크가 직접 소유하는 완료 판정으로 못박았다 — `git grep -ri colab` 0건, `git grep -F 'AbortSignal.any'` 0건.
+* 2-2 에 **사후 수정 권한**을 4개 조건으로 명시했다 — (1) 스윕 출력이 지목한 파일·줄만, `target_files` 밖이어도 수정 가능, (2) 잔존 식별자 제거의 최소 편집만, (3) 금지 행위(테스트 삭제·`skip`·어서션 약화·`git commit`·파일 통째 삭제)는 이 권한으로도 뚫리지 않음, (4) 고친 경로·줄·이유와 어느 태스크의 1차 방어선이 놓쳤는지를 Linear 코멘트와 `worker_done` 에 전부 기록.
+* 사후 수정 후 2-1 의 5개 명령 재실행 + 스윕 재실행을 의무화했고, 끝내 0건이 되지 않거나 설계 판단을 요구하면 `--outcome failed` 로 그 파일·줄을 지목해 보고하도록 했다.
+* GATE 지시대로 `target_files` 는 **확장하지 않았다**(저장소 전역 `write: true` 없음). 대신 OW-210 `## 3` 의 "예외 없이 무수정" 조항을 2-2 스윕 지목 건에 한해 예외로 열고, 5개 명령 실패는 여전히 사후 수정 대상이 아님을 하위 항목으로 분리했다. `## 3` 금지 행위에 "2-2 권한을 두 스윕 이외의 목적으로 쓰지 않는다" 를 추가했다.
+* OW-210 `## 1. Preconditions` 에 두 스윕의 착수 시점 기준선 측정을 추가하고, 0건이 아니어도 블로커가 아님(2-2 소관)을 명시했다.
+* 개별 태스크의 로컬 판정은 GATE 지시대로 **전부 유지**했고, 아래 블로커 해소로 오히려 늘렸다. 스펙 문언을 1차/2차 방어선으로 통일해 OW-200·201·203·204·206·207 의 로컬 판정 문구에 "저장소 전역 0건은 OW-210 의 전역 스윕이 2차 방어선으로 확인한다" 를 붙였다.
+
+`target_files` 를 확장하지 않고도 §4 check 4(공유-쓰기 순서)가 깨지지 않는 근거를 계측했다 — dispatch table `deps` 의 이행 폐포에서 OW-210 의 선행 태스크는 **10건, 즉 자신을 뺀 전부**다(`OW-200`~`OW-209`). OW-210 은 웨이브의 유일한 싱크 노드이므로 2-2 가 어느 경로에 쓰든 형제 태스크와 동시 쓰기가 성립하지 않는다.
+
+### `[RED r3]` 블로커 3건
+
+| 블로커 | 조치 | 검증 |
+|---|---|---|
+| B1 OW-203 — 제공요건 14 에 웨이브 내 회수 경로 없음(`CLAUDE.md:39` 가 OW-203 out-of-scope) | (1) OW-206 전제조건에 `grep -cF -- 'AbortSignal.any' CLAUDE.md` 기대 1 / 종료 0 추가, 2-7 뒤에 완료 판정 블록 신설(기대 `0` / `exit=1`). dispatch table OW-206 `anchors` 에 승격. (2) OW-203 2-1 의 완료 판정을 저장소 전역에서 자기 파일로 좁히고(`grep -cF -- 'AbortSignal.any' app/api/process/route.ts` 기대 `0` / `exit=1`), 나머지 1건의 소유자(OW-206)와 2차 방어선(OW-210)을 스펙 본문에 적었다 | `git grep -n -F 'AbortSignal.any'` = 2건 — `CLAUDE.md:39`, `app/api/process/route.ts:38`. `grep -cF -- 'AbortSignal.any' CLAUDE.md` = 1, 종료 0 |
+| B2 OW-201 — 신규 `runner/local-worker.py` 에 `colab` 계측 부재, 회수 경로 없음 | OW-201 2-1 에 이식 금지 항목("`colab_runtime_versions` 등 Colab 런타임 대조 함수·상수·주석은 옮기지 않는다 — 락 SHA-256 상수 3종 대조로 대체")을 넣고, 완료 판정을 `py_compile` + `grep -ci colab runner/local-worker.py` 두 명령으로 확장. 같은 이유로 OW-200 에 2-4b 절을 신설해 신규 락 2종의 `colab` 0건 판정을 추가하고, 2-1 에 출발점 파일 3행 주석을 옮겨 적지 않는다는 지시를 넣었다 | `grep -ci colab runner/remote-worker.py` = 11. `grep -n -i colab runner/sam3-requirements.lock` = `3:# Torch, torchvision, numpy<2, and Pillow are Colab base-runtime invariants and are preflighted separately.` |
+| B3 OW-207 — 7단계 정의 자체가 `colab` 리터럴을 유도, 계측·회수 경로 없음 | (1) 7단계 문구에서 리터럴을 지웠다 — "옛 원격 CLI·ADC 관련 요구가 남아 있지 않은지 확인(잔재 점검 + 로그). 점검 명령에도 로그 문구에도 옛 CLI 이름을 문자 그대로 적지 않는다". (2) 완료 판정을 `bash -n` + `grep -ci colab scripts/provision-worker.sh` 두 명령으로 확장. (3) OW-206 2-3 뒤에 `grep -ci colab deploy/imagework.service.example` 기대 `0` / `exit=1` 판정을 신설 | 두 파일 모두 신규 생성 대상이라 편집 전 측정값 없음(`test -e` = 1). 회수 경로는 이제 OW-210 2-2 가 소유한다 |
+
+세 블로커 모두 "잔존을 웨이브 안에서 고칠 태스크가 없다" 가 공통 결함이었고, 위 로컬 계측(1차)과 OW-210 2-2 전역 스윕(2차) 두 층으로 닫았다.
+
+### `[RED r3]` 노트 4건
+
+| 노트 | 조치 |
+|---|---|
+| N1 OW-206 — 폐기 환경변수 검사가 `CLAUDE.md` 를 안 덮음(측정 1건) | 2-7 완료 판정 블록에 같은 정규식의 `CLAUDE.md` 판정을 넣어 2-5·2-6 과 기준을 맞췄다 |
+| N2 `requirement_map` 21행 매핑이 실제 소유와 불일치 | `21 → OW-206 · OW-209` 로 고쳤다. 같은 이유로 `14 → OW-203 · OW-206 · OW-210`, `23` 에 OW-200·OW-206·OW-207 을 추가했다 |
+| N3 OW-200 `irreversible` 규칙 문언 긴장 | `false` 를 유지한다. RED 자신이 "실질 위험 0", "뒤집어도 스펙 본문은 바뀌지 않는다" 로 판정했고, 삭제 대상이 그 실행에서 스스로 만든 `$LOCKGATE_DEST` 한 곳뿐이라 기존 데이터 손실 경로가 없다. 되돌릴 수 없는 조작 0건 + 스냅샷 50파일 + `git ls-files` 추적 확인이 근거다 |
+| N4 OW-205 — fake `RunnerConfig` 에 폐기 `IMAGEWORK_*` 키 잔존(측정 4건) | 2-4 에 "fake `RunnerConfig` 리터럴에서 폐기된 `IMAGEWORK_*` 키를 함께 지운다" 를 측정값과 함께 넣어 OW-210 에서의 재작업을 없앴다 |
+
+## requirement_map
+
+`[ANALYZE]` 25항 + `[GATE]` 26·27항 전부 매핑. N2 반영으로 14·21·23 행의 소유자를 실제와 맞췄다.
+
+```
+1 → OW-200        2 → OW-200        3 → OW-201        4 → OW-201
+5 → OW-201        6 → OW-201        7 → OW-201        8 → OW-201
+9 → OW-202       10 → OW-202       11 → OW-203       12 → OW-203
+13 → OW-203      15 → OW-204       16 → OW-203       17 → OW-206
+18 → OW-207      19 → OW-206       20 → OW-206       22 → OW-208
+24 → OW-205 · OW-210               25 → OW-210
+14 → OW-203 · OW-206 · OW-210
+21 → OW-206 · OW-209
+23 → OW-200 · OW-201 · OW-206 · OW-207 · OW-208 · OW-209 · OW-210
+26 → OW-202 · OW-203               27 → OW-204 · OW-209
+```
+
+GATE 확정 답변 5건도 전부 태스크로 내려갔다 — Q1(A) → OW-201·OW-207 의 `py_compile` / `bash -n` 판정, Q2(C) → OW-200, Q3 T23·T24 편입 → OW-202·OW-203·OW-204·OW-209, Q4(A) → OW-208·OW-209, Q5(B) 120s·400 고정 + burst·드라이버 임계값 위임 → OW-206·OW-207. `[GATE r2]` 의 구조 지시는 OW-210 2-2 로 내려갔다.
+
+전역 불변식 2건의 소유 사슬이 이번 라운드에 확정됐다 — 제공요건 14 는 1차 OW-203(자기 파일)·OW-206(`CLAUDE.md`), 2차 OW-210. 제공요건 23 은 1차 OW-200·OW-201·OW-204·OW-206·OW-207·OW-208·OW-209(각자 자기 파일), 2차 OW-210.
