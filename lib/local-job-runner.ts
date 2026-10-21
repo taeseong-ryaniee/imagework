@@ -29,6 +29,7 @@ const maxCrashesPerWindow = 3;
 const gpuLockConfirmMs = 250;
 const groupStopTimeoutMs = 10_000;
 const groupProbeIntervalMs = 50;
+const maxWorkerLineChars = 64 * 1024; // protocol lines are a few hundred bytes; longer unterminated output is a broken worker
 
 const configSchema = z.object({
   IMAGEWORK_PROCESSING_CODE: z.string().min(32).max(512),
@@ -429,6 +430,11 @@ export class LocalJobRunner {
         this.handleWorkerLine(generation, buffer.slice(0, newlineIndex));
         buffer = buffer.slice(newlineIndex + 1);
         newlineIndex = buffer.indexOf("\n");
+      }
+      if (buffer.length > maxWorkerLineChars) {
+        console.error("[local-job-runner] worker stdout line exceeded the size limit.");
+        buffer = "";
+        this.handleWorkerFailure(generation);
       }
     });
     handle.onStderrData((chunk) => this.logDiagnostic(chunk));

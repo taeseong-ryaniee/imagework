@@ -201,6 +201,10 @@ class FakeWorker implements WorkerHandle {
     this.stdoutListener?.(`${line}\n`);
   }
 
+  emitStdoutChunk(chunk: string): void {
+    this.stdoutListener?.(chunk);
+  }
+
   emitExit(): void {
     this.exitListener?.();
   }
@@ -448,6 +452,19 @@ describe("LocalJobRunner", () => {
     await expect(secondJob).resolves.toBeUndefined();
     expect(registry.read(parseProcessJobId(secondJobId))).toMatchObject({ state: "done" });
     expect(registry.read(parseProcessJobId(secondJobId))?.resultPath).toBeTruthy();
+  });
+
+  it("줄바꿈 없이 64 KiB를 넘는 stdout은 워커 장애로 복구한다", async () => {
+    const { runner, workers, registry } = await createReadyRunner();
+    const { worker, job } = await startJob(workers, runner, registry);
+    const outcome = job.then(() => "resolved", (error: unknown) => error);
+
+    for (let sent = 0; sent <= 64 * 1024; sent += 8 * 1024) worker.emitStdoutChunk("x".repeat(8 * 1024));
+
+    expect(registry.read(parseProcessJobId(jobId))).toMatchObject({ state: "failed", errorKind: "workerCrash" });
+    expect(worker.stopGroupCalls).toBe(1);
+    await expect(outcome).resolves.toMatchObject({ name: "CommandExecutionError" });
+    await waitFor(() => workers.spawned.length === 2);
   });
 
   it("추론 중 취소하면 SIGUSR1을 보내고 워커 응답에 따라 cancelled로 전이한다", async () => {
