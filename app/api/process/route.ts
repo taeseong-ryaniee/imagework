@@ -1,12 +1,12 @@
-import { ColabJobRunner, matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/colab-job-runner";
-import { CommandExecutionError, ImageworkInputError, JobCancelledError, JobRegistrationError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, ResultContractError, RunnerConfigurationError } from "@/lib/colab-errors";
-import { maxMultipartRequestBytes, parseProcessFormData } from "@/lib/colab-input";
+import { LocalJobRunner, matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/local-job-runner";
+import { CommandExecutionError, ImageworkInputError, JobCancelledError, JobRegistrationError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, ResultContractError, RunnerConfigurationError } from "@/lib/job-errors";
+import { maxMultipartRequestBytes, parseProcessFormData } from "@/lib/image-input";
 import { parseProcessJobId, processJobRegistry, type ProcessJobRegistry } from "@/lib/process-job-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Runner = Pick<ColabJobRunner, "run">;
+type Runner = Pick<LocalJobRunner, "run">;
 type RunnerProvider = () => Runner;
 type ConfigProvider = () => Pick<RunnerConfig, "processingCode">;
 const apiHeaders = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
@@ -18,13 +18,15 @@ const responseFor = (error: unknown): Response => {
   if (error instanceof QueueCapacityError) return apiJson({ error: "현재 요청이 많습니다. 잠시 후 다시 시도해 주세요." }, 429, { "Retry-After": "60" });
   if (error instanceof JobTimeoutError) return apiJson({ error: "작업 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요." }, 504);
   if (error instanceof JobCancelledError) return apiJson({ error: "요청이 취소되었습니다." }, 499);
-  if (error instanceof CommandExecutionError) return apiJson({ error: "현재 Colab 작업을 시작할 수 없습니다. 잠시 후 다시 시도해 주세요." }, 503);
+  if (error instanceof CommandExecutionError) return apiJson({ error: "현재 작업을 시작할 수 없습니다. 잠시 후 다시 시도해 주세요." }, 503);
   if (error instanceof ResultContractError) return apiJson({ error: "결과 파일을 확인하지 못했습니다. 다시 시도해 주세요." }, 502);
   return apiJson({ error: "처리 중 문제가 발생했습니다. 다시 시도해 주세요." }, 500);
 };
 
+// Submission is now fire-and-forget: register the job, hand it to the runner's queue, and
+// respond 202 without waiting for processing to finish. The client learns the outcome via
+// GET /api/process/status and downloads via GET /api/process/result.
 export const createProcessHandler = (runnerProvider: RunnerProvider, registry: ProcessJobRegistry = processJobRegistry, configProvider: ConfigProvider = () => parseRunnerConfig(process.env)) => async (request: Request): Promise<Response> => {
-  let registeredJobId: ReturnType<typeof parseProcessJobId> | undefined;
   try {
     const declaredLength = request.headers.get("content-length");
     if (declaredLength && (!/^[0-9]+$/.test(declaredLength) || Number(declaredLength) > maxMultipartRequestBytes)) throw new ImageworkInputError();
@@ -34,26 +36,27 @@ export const createProcessHandler = (runnerProvider: RunnerProvider, registry: P
     const jobId = parseProcessJobId(formData.get("jobId"));
     const input = await parseProcessFormData(formData);
     const jobSignal = registry.register(jobId);
-    registeredJobId = jobId;
-    const result = await runnerProvider().run(input, AbortSignal.any([jobSignal, request.signal]));
-    return new Response(new Uint8Array(result.bytes), {
-      headers: {
-        "Content-Disposition": `attachment; filename="${result.name}"`,
-        "Content-Type": result.contentType,
-        ...apiHeaders,
-      },
+    // Queue admission (RunnerConfigurationError/QueueCapacityError/an already-cancelled
+    // signal) rejects before the job is ever pushed onto the runner's queue, so the
+    // registry entry would otherwise stay "queued" forever — patch that here. Every other
+    // rejection path inside LocalJobRunner already transitions the registry itself before
+    // rejecting, so this only fires for the genuinely-stuck case (guarded by the state
+    // check) and never overwrites a legitimate outcome the runner already recorded.
+    void runnerProvider().run(jobId, input, jobSignal).catch((error) => {
+      if (registry.read(jobId)?.state !== "queued") return;
+      if (error instanceof JobCancelledError) registry.markCancelled(jobId);
+      else registry.markFailed(jobId, "runnerConfiguration");
     });
+    return Response.json({ jobId }, { status: 202, headers: apiHeaders });
   } catch (error) {
     return responseFor(error);
-  } finally {
-    if (registeredJobId) registry.complete(registeredJobId);
   }
 };
 
-let serverRunner: ColabJobRunner | undefined;
+let serverRunner: LocalJobRunner | undefined;
 
-const runnerFromEnvironment = (): ColabJobRunner => {
-  if (!serverRunner) serverRunner = new ColabJobRunner(parseRunnerConfig(process.env));
+const runnerFromEnvironment = (): LocalJobRunner => {
+  if (!serverRunner) serverRunner = new LocalJobRunner(parseRunnerConfig(process.env));
   return serverRunner;
 };
 

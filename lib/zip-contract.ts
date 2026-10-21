@@ -1,8 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
 import * as yauzl from "yauzl";
-import type { AssetMode } from "./colab-input";
-import { ResultContractError } from "./colab-errors";
+import type { AssetMode } from "./image-input";
+import { ResultContractError } from "./job-errors";
 import { resultMetadataFor } from "./output-format";
 import type { DownloadedResult, OutputFormat } from "./output-format";
 

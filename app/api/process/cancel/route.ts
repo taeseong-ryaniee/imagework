@@ -1,5 +1,5 @@
-import { matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/colab-job-runner";
-import { ImageworkInputError, RunnerConfigurationError } from "@/lib/colab-errors";
+import { matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/local-job-runner";
+import { ImageworkInputError, RunnerConfigurationError } from "@/lib/job-errors";
 import { parseProcessJobId, processJobRegistry, type ProcessJobRegistry } from "@/lib/process-job-registry";
 import { z } from "zod";
 

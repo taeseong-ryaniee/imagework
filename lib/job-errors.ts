@@ -26,7 +26,7 @@ export class JobTimeoutError extends Error {
   readonly name = "JobTimeoutError";
 
   constructor() {
-    super("The Colab job exceeded its allowed time.");
+    super("The local worker job exceeded its allowed time.");
   }
 }
 
@@ -34,7 +34,7 @@ export class JobCancelledError extends Error {
   readonly name = "JobCancelledError";
 
   constructor() {
-    super("The client cancelled the Colab job.");
+    super("The job was cancelled by an explicit cancel request.");
   }
 }
 
@@ -58,7 +58,7 @@ export class CommandExecutionError extends Error {
   readonly name = "CommandExecutionError";
 
   constructor() {
-    super("The Colab command did not complete.");
+    super("The local worker command did not complete.");
   }
 }
 

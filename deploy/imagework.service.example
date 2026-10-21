@@ -1,0 +1,32 @@
+# systemd unit example — copy to /etc/systemd/system/imagework.service, fill
+# in the placeholders below, then:
+#   systemctl daemon-reload
+#   systemctl enable --now imagework
+#
+# Do not commit a copy of this file with real values or secrets filled in.
+
+[Unit]
+Description=Imagework local GPU worker service
+After=network.target
+
+[Service]
+Type=simple
+# Replace with a dedicated, non-interactive operating-system service account.
+User=imagework
+Group=imagework
+# Absolute path to the built application checkout.
+WorkingDirectory=/srv/imagework
+# Absolute path to the server-only .env file; never commit its contents.
+EnvironmentFile=/etc/imagework/imagework.env
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# The Node.js process (npm start) spawns the local worker as its own child
+# process, so this single unit supervises both; a crash in either restarts
+# the whole service.
+
+[Install]
+WantedBy=multi-user.target

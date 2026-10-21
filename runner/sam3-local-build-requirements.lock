@@ -1,5 +1,5 @@
-# Build tools for the source-only iopath 0.1.10 package in sam3-requirements.lock.
-# Install first with: python -m pip install --no-deps --require-hashes -r sam3-build-requirements.lock
+# Build tools for the source-only iopath 0.1.10 package in sam3-local-requirements.lock.
+# Install first with: python -m pip install --no-deps --require-hashes -r sam3-local-build-requirements.lock
 setuptools==83.0.0 \
     --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
     --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3

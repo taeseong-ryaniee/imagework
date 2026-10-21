@@ -35,8 +35,8 @@ afterEach(async () => {
 describe("public artifact gate", () => {
   it("accepts an archival Markdown-only notebook without execution fields", async () => {
     const root = await createRepository();
-    await mkdir(join(root, "colab"));
-    await writeFile(join(root, "colab", "archive.ipynb"), JSON.stringify({
+    await mkdir(join(root, "legacy"));
+    await writeFile(join(root, "legacy", "archive.ipynb"), JSON.stringify({
       nbformat: 4,
       cells: [{ cell_type: "markdown", metadata: {}, source: ["Archived instructions."] }],
     }));
@@ -45,7 +45,7 @@ describe("public artifact gate", () => {
       refresh_token: "${REFRESH_TOKEN}",
       private_key: "example-private-key",
     }));
-    execFileSync("git", ["add", "colab/archive.ipynb", "credentials.example.json"], { cwd: root });
+    execFileSync("git", ["add", "legacy/archive.ipynb", "credentials.example.json"], { cwd: root });
 
     expect(gateResult(root).status).toBe(0);
   }, subprocessTimeoutMs);

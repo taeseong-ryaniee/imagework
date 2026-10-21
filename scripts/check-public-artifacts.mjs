@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const excludedPrefixes = ["node_modules/", ".next/", "out/"];
-const artifactPath = /(?:^|\/)(?:colab\/)?(?:output|outputs|results)(?:\/|$)|(?:^|\/)(?:result(?:[-_].*)?|imagework-results(?:[-_].*)?)\.(?:zip|png|jpe?g|webp|gif|bmp|svg)$/i;
+const artifactPath = /(?:^|\/)(?:output|outputs|results)(?:\/|$)|(?:^|\/)(?:result(?:[-_].*)?|imagework-results(?:[-_].*)?)\.(?:zip|png|jpe?g|webp|gif|bmp|svg)$/i;
 const environmentPath = /(?:^|\/)\.env(?:\..+)?$/;
 const bytecodePath = /(?:^|\/)(?:__pycache__\/|.*\.py[co]$)/;
 const internalStatePath = /^(?:\.omo|\.hermes)(?:\/|$)/;

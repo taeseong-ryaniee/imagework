@@ -8,7 +8,6 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "check:colab-notebook": "node scripts/check-colab-notebook.mjs",
     "check:public-artifacts": "node scripts/check-public-artifacts.mjs"
   },
   "dependencies": {

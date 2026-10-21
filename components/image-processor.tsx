@@ -23,11 +23,14 @@ const OUTPUT_COPY: Readonly<Record<OutputFormat, string>> = { png: "PNG", svg: "
 type JobState =
   | Readonly<{ readonly kind: "ready" }>
   | Readonly<{ readonly kind: "preparing" }>
-  | Readonly<{ readonly kind: "running" }>
-  | Readonly<{ readonly kind: "cancelling" }>
+  | Readonly<{ readonly kind: "queued"; readonly queuePosition?: number }>
+  | Readonly<{ readonly kind: "processing" }>
+  | Readonly<{ readonly kind: "result-ready" }>
   | Readonly<{ readonly kind: "downloading" }>
+  | Readonly<{ readonly kind: "cancelling" }>
   | Readonly<{ readonly kind: "completed" }>
-  | Readonly<{ readonly kind: "failed"; readonly message: string }>;
+  | Readonly<{ readonly kind: "failed"; readonly message: string }>
+  | Readonly<{ readonly kind: "expired" }>;
 
 type NormalizedPoint = Readonly<{ readonly x: number; readonly y: number }>;
 
@@ -38,15 +41,85 @@ class ClientJobError extends Error {
   }
 }
 
+// Recovery record persisted across reloads. Never store the processing code, the image, or
+// the box values here — re-entering the code is the price of resuming (security invariant).
+type JobRecord = Readonly<{ readonly jobId: string; readonly outputFormat: OutputFormat; readonly expiresAt: number }>;
+const JOB_RECORD_STORAGE_KEY = "imagework:active-job";
+const POLL_INTERVAL_MS = 2000;
+const BACKOFF_STEPS_MS = [2000, 4000, 8000, 10000] as const;
+// ponytail: fixed ceiling so a very old localStorage entry doesn't offer recovery forever; tune if jobs routinely
+// queue longer than this before starting.
+const RECOVERY_MAX_WAIT_MS = 60 * 60 * 1000;
+// Mirrors the copy's hardcoded "10분" and the server's IMAGEWORK_RESULT_TTL_SECONDS default (600s). The client has
+// no other way to learn the real deadline: /api/process/status never returns expiresAt.
+const RESULT_TTL_MS = 10 * 60 * 1000;
+const STEP_LABELS = ["제출됨", "대기", "처리 중", "완료"] as const;
+
+const isJobRecord = (value: unknown): value is JobRecord => {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.jobId === "string" &&
+    typeof record.outputFormat === "string" &&
+    (OUTPUT_FORMATS as readonly string[]).includes(record.outputFormat) &&
+    typeof record.expiresAt === "number"
+  );
+};
+
+const readJobRecord = (): JobRecord | undefined => {
+  try {
+    const raw = window.localStorage.getItem(JOB_RECORD_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    return isJobRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const writeJobRecord = (record: JobRecord): void => {
+  try {
+    window.localStorage.setItem(JOB_RECORD_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // Storage unavailable (private mode, quota) — recovery just won't work; the job itself is unaffected.
+  }
+};
+
+const clearJobRecord = (): void => {
+  try {
+    window.localStorage.removeItem(JOB_RECORD_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+};
+
+const backoffDelayMs = (consecutiveFailures: number): number =>
+  consecutiveFailures <= 0 ? POLL_INTERVAL_MS : BACKOFF_STEPS_MS[Math.min(consecutiveFailures - 1, BACKOFF_STEPS_MS.length - 1)];
+
+const stepIndexForKind = (kind: JobState["kind"]): number | undefined => {
+  switch (kind) {
+    case "preparing": return 0;
+    case "queued": return 1;
+    case "processing": return 2;
+    case "result-ready":
+    case "downloading":
+    case "completed": return 3;
+    default: return undefined;
+  }
+};
+
 const actionLabelFor = (state: JobState): string => {
   switch (state.kind) {
     case "ready": return "결과 만들기";
     case "preparing": return "요청을 준비하고 있습니다";
-    case "running": return "Colab GPU에서 처리 중입니다";
-    case "cancelling": return "취소 요청을 전송하고 있습니다";
+    case "queued": return "대기열에 있습니다";
+    case "processing": return "사내 GPU에서 처리 중입니다";
+    case "result-ready": return "결과 다운로드";
     case "downloading": return "선택한 결과를 다운로드하고 있습니다";
+    case "cancelling": return "취소 요청을 전송하고 있습니다";
     case "completed": return "다시 처리하기";
     case "failed": return "다시 시도하기";
+    case "expired": return "다시 시도하기";
   }
 };
 
@@ -54,11 +127,14 @@ const statusCopyFor = (state: JobState): string => {
   switch (state.kind) {
     case "ready": return "파일, 이미지 유형, 대상 영역, 작업 코드를 준비하면 서버 작업을 시작할 수 있습니다.";
     case "preparing": return "이미지와 설정을 안전하게 전송할 요청을 준비하고 있습니다.";
-    case "running": return "전용 Colab GPU 작업자가 이미지를 처리하고 있습니다. 이 창을 닫지 마세요.";
-    case "cancelling": return "취소 요청을 전송했고, 현재 요청이 끝날 때까지 기다리고 있습니다. 원격 GPU가 중단됐다고 단정하지 않습니다.";
+    case "queued": return "작업이 대기열에 들어갔습니다. 앞선 작업이 끝나면 자동으로 시작합니다.";
+    case "processing": return "사내 GPU가 이미지를 처리하고 있습니다.";
+    case "result-ready": return "결과가 준비되었습니다. 10분 안에 내려받으세요.";
     case "downloading": return "검증된 선택 결과를 브라우저로 다운로드하고 있습니다.";
+    case "cancelling": return "취소 요청을 확인하고 있습니다. 현재 단계에 따라 최대 30초 걸릴 수 있습니다.";
     case "completed": return "선택한 결과의 다운로드를 시작했습니다. 다시 처리하려면 같은 설정으로 요청할 수 있습니다.";
     case "failed": return state.message;
+    case "expired": return "결과 보관 시간(10분)이 지나 삭제되었습니다. 같은 설정으로 다시 시도해 주세요.";
   }
 };
 
@@ -88,12 +164,6 @@ const downloadResult = async (response: Response, outputFormat: OutputFormat): P
   anchor.remove();
   URL.revokeObjectURL(objectUrl);
 };
-
-const isAborted = (error: unknown): boolean => error instanceof DOMException && error.name === "AbortError";
-
-const cancellationMessage = (cancelEndpointUnconfirmed: boolean): string => cancelEndpointUnconfirmed
-  ? "브라우저 요청을 중단했습니다. 취소 요청 확인을 받지 못했으므로 원격 GPU 정리 상태는 보장할 수 없습니다. 다시 시도할 수 있습니다."
-  : "브라우저 요청을 중단했습니다. 원격 GPU 작업의 정리 여부를 확인할 수 없습니다. 다시 시도할 수 있습니다.";
 
 const clamp = (value: number): number => Math.min(1, Math.max(0, value));
 const normalizedPointFor = (event: React.PointerEvent<HTMLDivElement>, bounds: DOMRect): NormalizedPoint | undefined => {
@@ -131,18 +201,52 @@ export function ImageProcessor() {
   const [boxTouched, setBoxTouched] = useState(false);
   const [codeTouched, setCodeTouched] = useState(false);
   const [jobState, setJobState] = useState<JobState>({ kind: "ready" });
+  const [connectionIssue, setConnectionIssue] = useState(false);
+  const [cancelInFlight, setCancelInFlight] = useState(false);
+  const [recoverableJob, setRecoverableJob] = useState<JobRecord>();
+  const [resuming, setResuming] = useState(false);
+  const [resumeCode, setResumeCode] = useState("");
+  const [resumeError, setResumeError] = useState<string>();
   const selectionVersion = useRef(0);
-  const controller = useRef<AbortController | undefined>(undefined);
   const activeJobId = useRef<string | undefined>(undefined);
-  const cancellationRequested = useRef(false);
-  const cancelEndpointUnconfirmed = useRef(false);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pollFailures = useRef(0);
+  const lastStepIndexRef = useRef(0);
   const dragState = useRef<Map<number, Readonly<{ readonly origin: NormalizedPoint; readonly startBox: BoxValues; readonly bounds: DOMRect }>>>(new Map());
   const currentBoxError = boxError(box);
-  const isBusy = jobState.kind === "preparing" || jobState.kind === "running" || jobState.kind === "cancelling" || jobState.kind === "downloading";
+  const isBusy = jobState.kind === "preparing" || jobState.kind === "queued" || jobState.kind === "processing" || jobState.kind === "cancelling" || jobState.kind === "result-ready" || jobState.kind === "downloading";
+  const showCancelButton = jobState.kind === "preparing" || jobState.kind === "queued" || jobState.kind === "processing" || jobState.kind === "cancelling";
+  const isErrorKind = jobState.kind === "failed" || jobState.kind === "expired";
+  const stepIndex = stepIndexForKind(jobState.kind);
+  const displayStepIndex = stepIndex ?? lastStepIndexRef.current;
 
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (stepIndex !== undefined) lastStepIndexRef.current = stepIndex;
+  }, [stepIndex]);
+
+  useEffect(() => {
+    const record = readJobRecord();
+    // localStorage is client-only: reading it during render (even via a lazy useState initializer) would
+    // also run on the SSR pass and diverge from the client's hydration pass, causing a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- must run post-hydration, see above.
+    if (record && record.expiresAt > Date.now()) setRecoverableJob(record);
+  }, []);
+
+  useEffect(() => () => stopPolling(), []);
+
+  useEffect(() => {
+    if (!isBusy) return;
+    const handler = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isBusy]);
 
   async function handleFileChange(file: File | undefined): Promise<void> {
     const version = selectionVersion.current + 1;
@@ -230,15 +334,97 @@ export function ImageProcessor() {
     return true;
   }
 
+  function stopPolling(): void {
+    if (pollTimer.current !== undefined) clearTimeout(pollTimer.current);
+    pollTimer.current = undefined;
+  }
+
+  function schedulePoll(jobId: string, code: string, delayMs: number): void {
+    stopPolling();
+    pollTimer.current = setTimeout(() => void pollOnce(jobId, code), delayMs);
+  }
+
+  function handlePollSoftFailure(jobId: string, code: string): void {
+    pollFailures.current += 1;
+    setConnectionIssue(true);
+    schedulePoll(jobId, code, backoffDelayMs(pollFailures.current));
+  }
+
+  async function pollOnce(jobId: string, code: string): Promise<void> {
+    stopPolling();
+    if (activeJobId.current !== jobId) return;
+    let response: Response;
+    try {
+      response = await fetch(`/api/process/status?jobId=${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+        headers: { "x-imagework-processing-code": code },
+      });
+    } catch {
+      if (activeJobId.current === jobId) handlePollSoftFailure(jobId, code);
+      return;
+    }
+    if (activeJobId.current !== jobId) return;
+    if (response.status >= 500) {
+      handlePollSoftFailure(jobId, code);
+      return;
+    }
+    if (!response.ok) {
+      setConnectionIssue(false);
+      setJobState({ kind: "failed", message: errorMessageFrom(await response.text()) });
+      return;
+    }
+    pollFailures.current = 0;
+    setConnectionIssue(false);
+    const body = (await response.json()) as Readonly<{ readonly state: string; readonly queuePosition?: number }>;
+    switch (body.state) {
+      case "queued":
+        setJobState({ kind: "queued", queuePosition: body.queuePosition });
+        schedulePoll(jobId, code, POLL_INTERVAL_MS);
+        return;
+      case "processing":
+        setJobState({ kind: "processing" });
+        schedulePoll(jobId, code, POLL_INTERVAL_MS);
+        return;
+      case "done":
+        writeJobRecord({ jobId, outputFormat, expiresAt: Date.now() + RESULT_TTL_MS });
+        setJobState({ kind: "result-ready" });
+        return;
+      case "cancelled":
+        clearJobRecord();
+        setJobState({ kind: "failed", message: "요청한 취소가 완료되었습니다. 다시 시도할 수 있습니다." });
+        return;
+      case "failed":
+      default:
+        setJobState({ kind: "failed", message: "작업이 실패했습니다. 잠시 후 다시 시도해 주세요." });
+        return;
+    }
+  }
+
+  function isJobRecordExpired(jobId: string): boolean {
+    const record = readJobRecord();
+    return record?.jobId === jobId && record.expiresAt <= Date.now();
+  }
+
+  function resetFormForExpiry(): void {
+    setSelectedImage(undefined);
+    setPreviewUrl(undefined);
+    setImageError(undefined);
+    setAssetMode(undefined);
+    setOutputFormat("zip");
+    setBox(INITIAL_BOX);
+    setProcessingCode("");
+    setModeTouched(false);
+    setBoxTouched(false);
+    setCodeTouched(false);
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (isBusy || !validateRequest() || !selectedImage || !assetMode) return;
-    const requestController = new AbortController();
     const jobId = globalThis.crypto.randomUUID();
-    controller.current = requestController;
     activeJobId.current = jobId;
-    cancellationRequested.current = false;
-    cancelEndpointUnconfirmed.current = false;
+    pollFailures.current = 0;
+    setConnectionIssue(false);
     setJobState({ kind: "preparing" });
     const formData = new FormData();
     formData.append("file", selectedImage.file);
@@ -248,67 +434,111 @@ export function ImageProcessor() {
     formData.append("jobId", jobId);
     formData.append("processingCode", processingCode);
     try {
-      const responseRequest = fetch("/api/process", {
+      const response = await fetch("/api/process", {
         body: formData,
         headers: { "x-imagework-processing-code": processingCode },
         method: "POST",
-        signal: requestController.signal,
       });
-      setJobState({ kind: "running" });
-      const response = await responseRequest;
-      if (cancellationRequested.current) {
-        setJobState({ kind: "failed", message: cancellationMessage(cancelEndpointUnconfirmed.current) });
-        return;
-      }
+      if (activeJobId.current !== jobId) return;
       if (!response.ok) {
+        activeJobId.current = undefined;
         setJobState({ kind: "failed", message: errorMessageFrom(await response.text()) });
         return;
       }
-      setJobState({ kind: "downloading" });
-      await downloadResult(response, outputFormat);
-      setJobState({ kind: "completed" });
-    } catch (error) {
-      if (isAborted(error)) {
-        setJobState({ kind: "failed", message: cancellationMessage(cancelEndpointUnconfirmed.current) });
-      } else if (error instanceof ClientJobError) {
-        setJobState({ kind: "failed", message: error.message });
-      } else {
-        setJobState({ kind: "failed", message: "네트워크 또는 작업자 연결에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요." });
-      }
-    } finally {
-      if (activeJobId.current === jobId) {
-        controller.current = undefined;
-        activeJobId.current = undefined;
-        cancellationRequested.current = false;
-        cancelEndpointUnconfirmed.current = false;
-      }
+      writeJobRecord({ jobId, outputFormat, expiresAt: Date.now() + RECOVERY_MAX_WAIT_MS });
+      setJobState({ kind: "queued" });
+      schedulePoll(jobId, processingCode, 0);
+    } catch {
+      if (activeJobId.current !== jobId) return;
+      activeJobId.current = undefined;
+      setJobState({ kind: "failed", message: "네트워크 또는 작업자 연결에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요." });
     }
   }
 
   async function handleCancel(): Promise<void> {
     const jobId = activeJobId.current;
-    const requestController = controller.current;
-    if (!jobId || !requestController || jobState.kind === "cancelling") return;
-    cancellationRequested.current = true;
-    setJobState({ kind: "cancelling" });
+    if (!jobId || cancelInFlight || jobState.kind === "cancelling") return;
+    setCancelInFlight(true);
     try {
       const response = await fetch("/api/process/cancel", {
         body: JSON.stringify({ jobId, processingCode }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
-      cancelEndpointUnconfirmed.current = !response.ok;
-    } catch (error) {
-      cancelEndpointUnconfirmed.current = true;
-      if (error instanceof DOMException || error instanceof TypeError) return;
+      if (response.ok && activeJobId.current === jobId) setJobState({ kind: "cancelling" });
+    } catch {
+      // Network hiccup sending the cancel request — leave state untouched so the button re-enables for a retry.
     } finally {
-      requestController.abort();
+      setCancelInFlight(false);
     }
+  }
+
+  async function handleDownloadResult(): Promise<void> {
+    const jobId = activeJobId.current;
+    if (!jobId) return;
+    setJobState({ kind: "downloading" });
+    try {
+      const response = await fetch(`/api/process/result?jobId=${encodeURIComponent(jobId)}`, {
+        headers: { "x-imagework-processing-code": processingCode },
+      });
+      if (!response.ok) {
+        if (response.status === 400 && isJobRecordExpired(jobId)) {
+          clearJobRecord();
+          activeJobId.current = undefined;
+          resetFormForExpiry();
+          setJobState({ kind: "expired" });
+          return;
+        }
+        setJobState({ kind: "failed", message: errorMessageFrom(await response.text()) });
+        return;
+      }
+      await downloadResult(response, outputFormat);
+      clearJobRecord();
+      activeJobId.current = undefined;
+      setJobState({ kind: "completed" });
+    } catch (error) {
+      setJobState({ kind: "failed", message: error instanceof ClientJobError ? error.message : "네트워크 또는 작업자 연결에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요." });
+    }
+  }
+
+  async function handleResume(): Promise<void> {
+    if (!recoverableJob) return;
+    if (resumeCode.trim() === "") {
+      setResumeError("작업 코드를 입력해 주세요.");
+      return;
+    }
+    activeJobId.current = recoverableJob.jobId;
+    setProcessingCode(resumeCode);
+    setOutputFormat(recoverableJob.outputFormat);
+    setResuming(false);
+    pollFailures.current = 0;
+    setConnectionIssue(false);
+    setJobState({ kind: "preparing" });
+    schedulePoll(recoverableJob.jobId, resumeCode, 0);
+  }
+
+  function handleManualRecheck(): void {
+    if (activeJobId.current) void pollOnce(activeJobId.current, processingCode);
   }
 
   return (
     <form aria-describedby="privacy-note" className="helper-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
       <aside className="boundary-note" id="privacy-note"><span className="notice-mark" aria-hidden="true">01</span><div><strong>서버 작업으로 결과를 만듭니다.</strong><p>선택한 파일과 설정은 결과를 만드는 동안에만 서버 작업자로 전송되고, 작업이 끝나면 정리됩니다. Hugging Face 토큰은 이 브라우저에 입력하거나 저장하지 않습니다.</p></div></aside>
+
+      {recoverableJob && jobState.kind === "ready" && !resuming && (
+        <p className="recovery-banner" role="status">이전에 시작한 작업이 있습니다. <button type="button" className="cancel-button" onClick={() => setResuming(true)}>이전 작업 이어보기</button></p>
+      )}
+      {recoverableJob && jobState.kind === "ready" && resuming && (
+        <div className="recovery-banner">
+          <label htmlFor="resume-code">이전 작업의 작업 코드</label>
+          <input autoComplete="off" className="code-field" id="resume-code" type="text" value={resumeCode} onChange={(event) => { setResumeError(undefined); setResumeCode(event.currentTarget.value); }} />
+          {resumeError && <p className="field-status is-error" role="alert">{resumeError}</p>}
+          <div className="recovery-actions">
+            <button type="button" className="launch-button" onClick={() => void handleResume()}>이어보기</button>
+            <button type="button" className="cancel-button" onClick={() => { setResuming(false); setResumeCode(""); setResumeError(undefined); }}>돌아가기</button>
+          </div>
+        </div>
+      )}
 
       <section className="form-section" aria-labelledby="file-label">
         <div className="field-heading"><div><p className="section-kicker">FILE</p><h2 id="file-label">처리할 이미지</h2></div><span className="quiet-badge">로컬 측정</span></div>
@@ -352,7 +582,26 @@ export function ImageProcessor() {
 
       <aside className="output-note"><div><span className="output-eyebrow">OUTPUT</span><strong>원하는 투명 결과 형식을 선택합니다.</strong></div><p><code>result.png</code>은 투명 PNG입니다. <code>result.svg</code>는 로고·아이콘에만 제공되며, ZIP은 해당 작업의 모든 결과를 포함합니다. JPEG 출력은 제공하지 않습니다.</p></aside>
 
-      <div className="launch-area"><p aria-live="polite" className={jobState.kind === "failed" ? "launch-hint is-error" : "launch-hint"} id="launch-hint" role={jobState.kind === "failed" ? "alert" : "status"}>{statusCopyFor(jobState)}</p><button aria-describedby="launch-hint" className="launch-button" disabled={isBusy} type="submit">{actionLabelFor(jobState)}</button>{isBusy && <button className="cancel-button" disabled={jobState.kind === "cancelling"} type="button" onClick={() => void handleCancel()}>{jobState.kind === "cancelling" ? "취소 요청 중" : "작업 취소"}</button>}</div>
+      <div className="launch-area">
+        {jobState.kind !== "ready" && (
+          <ol className="job-stepper" aria-label="처리 단계">
+            {STEP_LABELS.map((label, index) => <li key={label} aria-current={displayStepIndex === index ? "step" : undefined} data-status={index < displayStepIndex ? "done" : index === displayStepIndex ? "active" : "pending"}>{label}</li>)}
+          </ol>
+        )}
+        <p aria-live="polite" className={isErrorKind ? "launch-hint is-error" : "launch-hint"} id="launch-hint" role={isErrorKind ? "alert" : "status"}>{statusCopyFor(jobState)}</p>
+        {jobState.kind === "queued" && jobState.queuePosition !== undefined && <p className="launch-hint">대기 순서 {jobState.queuePosition}번째</p>}
+        {connectionIssue && <p aria-live="polite" role="status" className="launch-hint">연결을 다시 확인하고 있습니다</p>}
+        {connectionIssue && pollFailures.current >= 3 && <button type="button" className="cancel-button" onClick={handleManualRecheck}>상태 다시 확인</button>}
+        {jobState.kind === "result-ready" ? (
+          <>
+            <button type="button" className="launch-button" onClick={() => void handleDownloadResult()}>결과 다운로드</button>
+            <p className="launch-hint">결과는 10분 후 삭제됩니다</p>
+          </>
+        ) : (
+          <button aria-describedby="launch-hint" className="launch-button" disabled={isBusy} type="submit">{actionLabelFor(jobState)}</button>
+        )}
+        {showCancelButton && <button className="cancel-button" disabled={cancelInFlight || jobState.kind === "cancelling"} type="button" onClick={() => void handleCancel()}>{jobState.kind === "cancelling" ? "취소 요청 중" : "작업 취소"}</button>}
+      </div>
     </form>
   );
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ImageworkInputError } from "./colab-errors";
+import { ImageworkInputError } from "./job-errors";
 import { OUTPUT_FORMATS, outputSupportsMode } from "./output-format";
 import type { OutputFormat } from "./output-format";
 
