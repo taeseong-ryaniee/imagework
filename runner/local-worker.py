@@ -257,13 +257,20 @@ def _self_test() -> None:
     processor, vtracer_bin = _load_model()
     with tempfile.TemporaryDirectory() as tmp:
         job_dir = Path(tmp)
-        Image.new("RGB", (1, 1), color=(255, 0, 0)).save(job_dir / "input.png", format="PNG")
+        # A solid shape on a contrasting background, so the correct mask is neither empty nor full
+        # (_run_job rejects both). The box encloses the shape and is smaller than the image; logo mode
+        # also runs the vtracer branch.
+        image = Image.new("RGB", (256, 256), color=(255, 255, 255))
+        image.paste((200, 30, 30), (80, 80, 176, 176))
+        image.save(job_dir / "input.png", format="PNG")
         (job_dir / "job.json").write_text(
-            json.dumps({"mode": "photo", "box": {"cx": 0.5, "cy": 0.5, "width": 1.0, "height": 1.0}}),
+            json.dumps({"mode": "logo", "box": {"cx": 0.5, "cy": 0.5, "width": 0.625, "height": 0.625}}),
             encoding="utf8",
         )
         _run_job(job_dir, processor, vtracer_bin)
-        assert (job_dir / RESULT_ARCHIVE_NAME).is_file()
+        with zipfile.ZipFile(job_dir / RESULT_ARCHIVE_NAME) as archive:
+            assert sorted(archive.namelist()) == ["result.png", "result.svg"]
+            assert all(archive.getinfo(name).file_size > 0 for name in archive.namelist())
     print("self-test ok", file=sys.stderr)
 
 

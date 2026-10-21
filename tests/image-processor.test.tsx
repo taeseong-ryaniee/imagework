@@ -86,7 +86,7 @@ describe("ImageProcessor", () => {
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const url = String(input);
       if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
-      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done" }));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done", expiresAt: Date.now() + 120_000 }));
       if (url.startsWith("/api/process/result")) return Promise.resolve(zipResponse());
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -110,7 +110,7 @@ describe("ImageProcessor", () => {
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const url = String(input);
       if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
-      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done" }));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done", expiresAt: Date.now() + 120_000 }));
       if (url.startsWith("/api/process/result")) return Promise.resolve(pngResponse());
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -135,7 +135,7 @@ describe("ImageProcessor", () => {
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const url = String(input);
       if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
-      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done" }));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done", expiresAt: Date.now() + 120_000 }));
       if (url.startsWith("/api/process/result")) return Promise.resolve(zipResponse()); // PNG was requested below
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -383,7 +383,7 @@ describe("ImageProcessor", () => {
     const fetchMock = vi.fn<typeof fetch>((input) => {
       const url = String(input);
       if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
-      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done" }));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done", expiresAt: Date.now() + 120_000 }));
       if (url.startsWith("/api/process/result")) return Promise.resolve(jsonResponse({ error: "입력값을 다시 확인해 주세요." }, 400));
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -399,7 +399,7 @@ describe("ImageProcessor", () => {
     window.localStorage.setItem(JOB_RECORD_STORAGE_KEY, JSON.stringify({ ...stored, expiresAt: Date.now() - 1_000 }));
     fireEvent.click(screen.getByRole("button", { name: "결과 다운로드" }));
 
-    expect((await screen.findByRole("alert")).textContent).toContain("결과 보관 시간(10분)이 지나 삭제되었습니다");
+    expect((await screen.findByRole("alert")).textContent).toContain("결과 보관 시간이 지나 삭제되었습니다");
     expect(screen.queryByText("800 × 600px")).toBeNull();
     const processingCode = screen.getByRole("textbox", { name: "작업 코드" });
     if (!(processingCode instanceof HTMLInputElement)) throw new Error("Processing code field was expected.");
@@ -454,5 +454,65 @@ describe("ImageProcessor", () => {
     fireEvent.click(screen.getByRole("button", { name: "다시 시도하기" }));
 
     await screen.findByText("작업이 대기열에 들어갔습니다. 앞선 작업이 끝나면 자동으로 시작합니다.");
+  });
+  it("OW199 regression F3 server deadline reaches client", async () => {
+    const serverDeadline = Date.now() + 90_000;
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done", expiresAt: serverDeadline }));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+    await screen.findByRole("button", { name: "결과 다운로드" });
+
+    const stored = JSON.parse(window.localStorage.getItem(JOB_RECORD_STORAGE_KEY) ?? "{}") as Readonly<{ readonly expiresAt?: number }>;
+    expect(stored.expiresAt).toBe(serverDeadline);
+    expect(document.body.textContent).not.toContain("10분");
+  });
+
+  it("OW199 support F3 client rejects a done status without a usable deadline", async () => {
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (url === "/api/process") return Promise.resolve(jsonResponse({ jobId: processJobId }, 202));
+      if (url.startsWith("/api/process/status")) return Promise.resolve(jsonResponse({ state: "done" }));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("결과 보관 정보를 확인하지 못했습니다");
+    expect(screen.queryByRole("button", { name: "결과 다운로드" })).toBeNull();
+  });
+
+  it.each([
+    { status: 503, error: "서버 작업자가 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요." },
+    { status: 429, error: "현재 요청이 많습니다. 잠시 후 다시 시도해 주세요." },
+    { status: 499, error: "요청이 취소되었습니다." },
+  ])("OW199 support F4 client shows the admission refusal copy for HTTP $status", async ({ status, error }) => {
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (url === "/api/process") return Promise.resolve(jsonResponse({ error }, status));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ImageProcessor />);
+
+    await chooseValidImage();
+    fireEvent.change(screen.getByRole("textbox", { name: "작업 코드" }), { target: { value: "shared-processing-code" } });
+    fireEvent.click(screen.getByRole("button", { name: "결과 만들기" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(error);
+    expect(screen.getByRole("button", { name: "다시 시도하기" })).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/process/status"))).toHaveLength(0);
   });
 });

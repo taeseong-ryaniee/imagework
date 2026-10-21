@@ -1,7 +1,7 @@
 import { LocalJobRunner, matchesProcessingCode, parseRunnerConfig, type RunnerConfig } from "@/lib/local-job-runner";
 import { CommandExecutionError, ImageworkInputError, JobCancelledError, JobRegistrationError, JobTimeoutError, ProcessingCodeError, QueueCapacityError, ResultContractError, RunnerConfigurationError } from "@/lib/job-errors";
 import { maxMultipartRequestBytes, parseProcessFormData } from "@/lib/image-input";
-import { parseProcessJobId, processJobRegistry, type ProcessJobRegistry } from "@/lib/process-job-registry";
+import { parseProcessJobId, processJobRegistry, type ProcessJobId, type ProcessJobRegistry } from "@/lib/process-job-registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,9 +23,18 @@ const responseFor = (error: unknown): Response => {
   return apiJson({ error: "처리 중 문제가 발생했습니다. 다시 시도해 주세요." }, 500);
 };
 
-// Submission is now fire-and-forget: register the job, hand it to the runner's queue, and
-// respond 202 without waiting for processing to finish. The client learns the outcome via
-// GET /api/process/status and downloads via GET /api/process/result.
+// A job the runner refuses at admission never reaches its queue, so its registration would stay
+// "queued" forever: terminalize exactly that registration.
+const settleRefused = (registry: ProcessJobRegistry, jobId: ProcessJobId, signal: AbortSignal, error: unknown): void => {
+  if (error instanceof JobCancelledError) registry.markCancelled(jobId, signal);
+  else registry.markFailed(jobId, error instanceof QueueCapacityError ? "queueCapacity" : "runnerConfiguration", signal);
+};
+
+// Submission is fire-and-forget once the runner accepts the job: register it, hand it to the runner's
+// queue, and respond 202 without waiting for processing to finish. The client learns the outcome via
+// GET /api/process/status and downloads via GET /api/process/result. An admission refusal (startup
+// failed or circuit open 503, queue full 429, cancelled before submission 499) is thrown synchronously
+// by run() and answered with that status instead of 202.
 export const createProcessHandler = (runnerProvider: RunnerProvider, registry: ProcessJobRegistry = processJobRegistry, configProvider: ConfigProvider = () => parseRunnerConfig(process.env)) => async (request: Request): Promise<Response> => {
   try {
     const declaredLength = request.headers.get("content-length");
@@ -36,16 +45,17 @@ export const createProcessHandler = (runnerProvider: RunnerProvider, registry: P
     const jobId = parseProcessJobId(formData.get("jobId"));
     const input = await parseProcessFormData(formData);
     const jobSignal = registry.register(jobId);
-    // Queue admission (RunnerConfigurationError/QueueCapacityError/an already-cancelled
-    // signal) rejects before the job is ever pushed onto the runner's queue, so the
-    // registry entry would otherwise stay "queued" forever — patch that here. Every other
-    // rejection path inside LocalJobRunner already transitions the registry itself before
-    // rejecting, so this only fires for the genuinely-stuck case (guarded by the state
-    // check) and never overwrites a legitimate outcome the runner already recorded.
-    void runnerProvider().run(jobId, input, jobSignal).catch((error) => {
-      if (registry.read(jobId)?.state !== "queued") return;
-      if (error instanceof JobCancelledError) registry.markCancelled(jobId);
-      else registry.markFailed(jobId, "runnerConfiguration");
+    let completion: Promise<void>;
+    try {
+      completion = runnerProvider().run(jobId, input, jobSignal);
+    } catch (error) {
+      settleRefused(registry, jobId, jobSignal, error);
+      throw error;
+    }
+    // Every rejection after admission already transitions the registry inside LocalJobRunner; this only
+    // guards a registration that is somehow still "queued" and never overwrites an outcome the runner recorded.
+    void completion.catch((error) => {
+      if (registry.read(jobId)?.state === "queued") settleRefused(registry, jobId, jobSignal, error);
     });
     return Response.json({ jobId }, { status: 202, headers: apiHeaders });
   } catch (error) {

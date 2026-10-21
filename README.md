@@ -5,7 +5,8 @@ or a ZIP containing all available results. SVG is available only for logo and
 icon jobs. The browser sends the image, selected normalized target box, and
 download choice to a single server worker. That worker runs on the deployment
 host's own GPU, queues the job, validates the result archive, then makes only
-the selected file available for download before deleting job state.
+the selected file available for a single download, then deletes it; a result
+that is never downloaded is deleted after the configured retention time.
 
 This repository contains the application and worker implementation. It is not a
 claim that a public deployment has a real GPU host or Hugging Face credentials
@@ -107,10 +108,12 @@ generated evidence or secrets to the repository.
    - `ZIP`: 해당 작업에서 생성된 모든 결과. 항상 `result.png`를 포함하며 로고와
      아이콘에는 `result.svg`도 포함
 5. 결과 만들기를 누르고 준비·GPU 처리·다운로드 상태를 확인합니다. 작업 중에는
-   취소할 수 있습니다. 성공하면 선택한 형식의 파일이 자동 다운로드됩니다.
+   취소할 수 있습니다. 성공하면 다운로드 버튼이 나타나며, 버튼을 눌러야 선택한 형식의
+   파일을 한 번 내려받습니다. 내려받지 않은 결과는 보관 시간이 지나면 삭제됩니다.
 
 웹 브라우저에는 Hugging Face 토큰, 워커 실행 로그, 로컬 파일 경로가 노출되지
-않습니다. 업로드한 파일은 임시 서버 작업에만 사용됩니다.
+않습니다. 업로드한 파일은 임시 서버 작업에만 사용되며, 성공한 작업의 파일은 내려받거나
+보관 시간이 지날 때까지 서버에 남습니다.
 
 ### 서버 배포 순서
 
@@ -133,8 +136,9 @@ generated evidence or secrets to the repository.
    엔드포인트에서만 11 MiB multipart 요청을 허용하고 IP별 속도 제한을 적용해야
    하며, 비동기 잡 API 덕분에 읽기 타임아웃은 120초처럼 짧게 유지해도 됩니다.
 7. 아래 검사를 실행한 뒤, 일회용 이미지·작업 코드로 PNG, SVG, ZIP 다운로드를
-   각각 확인합니다. 실패 및 취소 작업도 로컬 작업 파일을 보관 기간 이후까지
-   남기지 않는지 점검합니다.
+   각각 확인합니다. 실패 및 취소 작업의 로컬 작업 파일이 워커(자식 VTracer 포함)가
+   멈춘 뒤 삭제되는지, 결과 파일이 한 번만 내려받아지고 보관 기간 후 삭제되는지
+   점검합니다.
 
 ```bash
 npm test

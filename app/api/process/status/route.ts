@@ -26,6 +26,8 @@ export const createStatusHandler = (registry: ProcessJobRegistry = processJobReg
         state: status.state,
         ...(status.state === "failed" ? { errorKind: status.errorKind } : {}),
         ...(status.state === "queued" ? { queuePosition: status.queuePosition } : {}),
+        // the server-side retention deadline (epoch ms); resultPath never leaves the server
+        ...(status.state === "done" && status.expiresAt !== undefined ? { expiresAt: status.expiresAt } : {}),
       },
       { status: 200, headers: apiHeaders },
     );

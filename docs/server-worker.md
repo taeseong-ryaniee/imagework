@@ -33,7 +33,7 @@ Use a Linux host with:
 The Next.js deployment must run as a Node.js server (`npm start`). A static
 host cannot execute the request-dependent route or run the local worker
 process. Keep the application single-instance: the local worker takes an
-exclusive GPU `flock` at startup (§4) and cannot be horizontally scaled
+exclusive GPU `flock` when it starts (§4) and cannot be horizontally scaled
 without a second GPU and a second worker instance.
 
 ## 2. Provision the local worker
@@ -51,7 +51,7 @@ script argument and never left behind in a runtime `.env` file.
 Once provisioning succeeds, install
 [`deploy/imagework.service.example`](../deploy/imagework.service.example) as a
 systemd unit to supervise `npm start`; the Node.js process spawns the local
-worker as its own child, so a single unit covers both. `Restart=on-failure`
+worker as its own child (in its own process group), so a single unit covers both. `Restart=on-failure`
 respawns the Node process (and with it, the worker) after a crash, and the
 unit starts automatically on boot.
 
@@ -70,7 +70,7 @@ values.
 | `IMAGEWORK_VTRACER_BIN` | Absolute path to the VTracer binary built during provisioning. |
 | `IMAGEWORK_JOB_TIMEOUT_SECONDS` | Whole-job deadline, from 30 to 600 seconds. |
 | `IMAGEWORK_JOB_TMP_ROOT` | Absolute private parent directory for temporary job files. |
-| `IMAGEWORK_RESULT_TTL_SECONDS` | Seconds a finished job's result is retained for download before it is deleted. |
+| `IMAGEWORK_RESULT_TTL_SECONDS` | Seconds a finished job's result is retained for its single download before it is deleted. The status endpoint reports the resulting deadline (`expiresAt`) to the browser. |
 | `IMAGEWORK_MAX_QUEUE_DEPTH` | Admission cap for active and queued jobs, from 1 to 100. |
 
 Never place any of these in `NEXT_PUBLIC_*`, client JavaScript, HTML, request
@@ -87,37 +87,65 @@ rotate.
 
 ## 4. Job lifecycle and cleanup
 
-When the Node server starts, it spawns the long-lived local worker process,
-which takes an exclusive `flock` on a lock file inside `IMAGEWORK_MODEL_CACHE`
-(startup fails if another instance already holds it) and sweeps
-`IMAGEWORK_JOB_TMP_ROOT` for orphaned per-job directories left behind by an
-unclean shutdown before it accepts jobs.
+The job runner starts lazily, on the first submission. It takes an exclusive
+`flock` on a lock file inside `IMAGEWORK_MODEL_CACHE` (startup fails if another
+instance already holds it), sweeps `IMAGEWORK_JOB_TMP_ROOT` for orphaned
+per-job directories left behind by an unclean shutdown, and only then spawns
+the long-lived local worker process in its own process group. Jobs submitted
+while the worker is starting or being replaced are queued and run once it
+reports ready. If startup fails (for example the lock is held), every queued
+job fails and later submissions are refused with `503`.
 
 For each submitted job:
 
 1. `POST /api/process` validates the actual input bytes, extension,
    dimensions, mode, selected output format, and box geometry, then admits the
-   job to the in-process FIFO queue and responds `202 {jobId}` immediately;
+   job to the in-process FIFO queue and responds `202 {jobId}` immediately.
+   When the runner refuses the job at admission it answers instead: `503`
+   (startup failed or circuit open), `429` with `Retry-After: 60` (queue
+   full) or `499` (cancelled before submission), and the job is not left
+   `queued`;
    the browser may set the box by dragging in its local proportional preview
    or by entering normalized numeric values, but the server remains the
    authority;
-2. explicitly sets each job's temporary directory to `0700` and its staged
-   files to `0600`;
+2. creates a unique temporary directory for the admitted job (`0700`) and
+   stages its files there as `0600`;
 3. the worker processes jobs one at a time in queue order, running SAM3
    segmentation and VTracer vectorization directly on the host GPU;
 4. `GET /api/process/status?jobId=` reports `queued` (with a 1-based
-   `queuePosition`), `processing`, `done`, `failed`, or `cancelled`;
-5. once `done`, `GET /api/process/result?jobId=` streams back only the
+   `queuePosition`), `processing`, `done` (with the server's `expiresAt`
+   deadline), `failed`, or `cancelled`;
+5. once `done`, `GET /api/process/result?jobId=` serves back only the
    browser-selected PNG, SVG, or ZIP, checked against its exact expected
-   members and size limits before it is served;
-6. the server deletes the job's temporary directory and result file as soon
-   as the result is downloaded, or after `IMAGEWORK_RESULT_TTL_SECONDS`
-   elapses undownloaded, whichever happens first.
+   members and size limits before it is served. The result is served once:
+   the first request claims it, and a repeated or concurrent request gets
+   `400`;
+6. the server deletes the job's temporary directory as soon as the claimed
+   result is buffered, or deletes an undownloaded result after
+   `IMAGEWORK_RESULT_TTL_SECONDS` elapses, whichever happens first. A failed
+   or cancelled job's directory is deleted once nothing can still write to it
+   (see below).
 
-If the worker process crashes mid-job, the Node server respawns it and
-resumes the queue with the next job; a respawn circuit breaker stops
-retrying after more than three crashes within ten minutes and fails the
-active job and every queued job with a safe error instead of looping.
+The worker runs in its own process group, because VTracer is a child of the
+Python worker and can outlive it. If the worker process crashes mid-job, or a
+job is stopped by the timeout or the cancellation grace period, the Node server
+kills the whole process group and waits until the worker has exited **and** no
+member of the group remains, and until pending Node file writes for that job
+have settled. Only then does it delete the job's directory and spawn a
+replacement worker; the queue resumes once the replacement reports ready. A
+worker that answers with a failure (`ok: false`) needs no group kill. If the
+group cannot be confirmed stopped, the directory and the GPU lock are kept, the
+runner stops admitting work and fails the queue with a safe error. The
+synchronous process `exit` callback cannot await a stop or observe reaping, so
+it uses a narrower rule: any unconfirmed stop keeps the GPU lock; a live worker
+(starting, ready or processing) gets one synchronous `SIGKILL` to its whole
+process group, and the lock is released only when that signal was sent or the
+group was already gone (`ESRCH`) — any other error, such as `EPERM`, keeps it;
+with no worker and no unconfirmed stop the lock is released. This relies on
+`SIGKILL` delivery, not on observed reaping; systemd's control-group kill stays
+the production guarantee when the service stops. A respawn
+circuit breaker also stops retrying after more than three crashes within ten
+minutes and fails every queued job instead of looping.
 
 The local worker reads the token file once, only during provisioning, and
 never at request time; no per-request token file exists to remove, print,
@@ -164,9 +192,17 @@ in-memory single-instance job registry: a cancellation received before
 registration is remembered until the matching request reaches the queue; a
 queued cancellation removes the job from the queue without touching the
 worker process; an active cancellation (the job currently running on the
-worker) sends `SIGUSR1`, waits up to a 30-second grace period, then sends
-`SIGKILL` and respawns the worker if it has not exited. The registry entry is
-deleted when the request completes. Unknown-`jobId` cancellation markers are
+worker) sends `SIGUSR1` to the worker process only and waits up to a
+30-second grace period. If the worker acknowledges with its own terminal
+message, the same worker keeps running and the job directory is deleted once
+pending file writes have settled. Otherwise, after the grace period, the server
+sends `SIGKILL` to the worker's whole process group, and the job directory is
+deleted and the worker respawned only once the group has stopped and pending
+file writes have settled; if the group cannot be confirmed stopped, the
+directory and the GPU lock are kept and no replacement starts. A cancellation
+applies to that one request, even if the same `jobId` is registered again
+later. The cancelled state is visible at once.
+Registry entries expire after `IMAGEWORK_RESULT_TTL_SECONDS`. Unknown-`jobId` cancellation markers are
 retained only for a short bounded TTL and an upper capacity limit, then
 evicted; this bounds in-memory state while preserving normal request/cancel
 races. The cancellation response does not reveal whether a `jobId` was
@@ -194,7 +230,8 @@ Before accepting traffic:
    exactly the expected members. Confirm photo mode cannot request SVG.
 3. Independently verify bad code, invalid image bytes, worker failure, and
    client cancellation all return only safe messages/statuses and leave no
-   job files behind once their retention window passes.
+   job files behind once their writers have stopped (failed and cancelled
+   jobs) or their retention window passes (unclaimed results).
 4. Confirm the worker's self-test (`local-worker.py --self-test`, run during
    provisioning) and any GPU-dependent benchmark are executed manually on the
    worker host — they need the real GPU and do not run in CI — then revoke

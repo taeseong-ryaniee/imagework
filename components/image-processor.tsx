@@ -50,9 +50,6 @@ const BACKOFF_STEPS_MS = [2000, 4000, 8000, 10000] as const;
 // ponytail: fixed ceiling so a very old localStorage entry doesn't offer recovery forever; tune if jobs routinely
 // queue longer than this before starting.
 const RECOVERY_MAX_WAIT_MS = 60 * 60 * 1000;
-// Mirrors the copy's hardcoded "10분" and the server's IMAGEWORK_RESULT_TTL_SECONDS default (600s). The client has
-// no other way to learn the real deadline: /api/process/status never returns expiresAt.
-const RESULT_TTL_MS = 10 * 60 * 1000;
 const STEP_LABELS = ["제출됨", "대기", "처리 중", "완료"] as const;
 
 const isJobRecord = (value: unknown): value is JobRecord => {
@@ -129,12 +126,12 @@ const statusCopyFor = (state: JobState): string => {
     case "preparing": return "이미지와 설정을 안전하게 전송할 요청을 준비하고 있습니다.";
     case "queued": return "작업이 대기열에 들어갔습니다. 앞선 작업이 끝나면 자동으로 시작합니다.";
     case "processing": return "사내 GPU가 이미지를 처리하고 있습니다.";
-    case "result-ready": return "결과가 준비되었습니다. 10분 안에 내려받으세요.";
+    case "result-ready": return "결과가 준비되었습니다. 보관 시간이 지나기 전에 내려받으세요.";
     case "downloading": return "검증된 선택 결과를 브라우저로 다운로드하고 있습니다.";
     case "cancelling": return "취소 요청을 확인하고 있습니다. 현재 단계에 따라 최대 30초 걸릴 수 있습니다.";
     case "completed": return "선택한 결과의 다운로드를 시작했습니다. 다시 처리하려면 같은 설정으로 요청할 수 있습니다.";
     case "failed": return state.message;
-    case "expired": return "결과 보관 시간(10분)이 지나 삭제되었습니다. 같은 설정으로 다시 시도해 주세요.";
+    case "expired": return "결과 보관 시간이 지나 삭제되었습니다. 같은 설정으로 다시 시도해 주세요.";
   }
 };
 
@@ -375,7 +372,7 @@ export function ImageProcessor() {
     }
     pollFailures.current = 0;
     setConnectionIssue(false);
-    const body = (await response.json()) as Readonly<{ readonly state: string; readonly queuePosition?: number }>;
+    const body = (await response.json()) as Readonly<{ readonly state: string; readonly queuePosition?: number; readonly expiresAt?: unknown }>;
     switch (body.state) {
       case "queued":
         setJobState({ kind: "queued", queuePosition: body.queuePosition });
@@ -385,10 +382,24 @@ export function ImageProcessor() {
         setJobState({ kind: "processing" });
         schedulePoll(jobId, code, POLL_INTERVAL_MS);
         return;
-      case "done":
-        writeJobRecord({ jobId, outputFormat, expiresAt: Date.now() + RESULT_TTL_MS });
+      case "done": {
+        // The retention deadline is the server's (IMAGEWORK_RESULT_TTL_SECONDS); the client never guesses one.
+        const { expiresAt } = body;
+        if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
+          setJobState({ kind: "failed", message: "결과 보관 정보를 확인하지 못했습니다. 다시 시도해 주세요." });
+          return;
+        }
+        if (expiresAt <= Date.now()) {
+          clearJobRecord();
+          activeJobId.current = undefined;
+          resetFormForExpiry();
+          setJobState({ kind: "expired" });
+          return;
+        }
+        writeJobRecord({ jobId, outputFormat, expiresAt });
         setJobState({ kind: "result-ready" });
         return;
+      }
       case "cancelled":
         clearJobRecord();
         setJobState({ kind: "failed", message: "요청한 취소가 완료되었습니다. 다시 시도할 수 있습니다." });
@@ -523,7 +534,7 @@ export function ImageProcessor() {
 
   return (
     <form aria-describedby="privacy-note" className="helper-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
-      <aside className="boundary-note" id="privacy-note"><span className="notice-mark" aria-hidden="true">01</span><div><strong>서버 작업으로 결과를 만듭니다.</strong><p>선택한 파일과 설정은 결과를 만드는 동안에만 서버 작업자로 전송되고, 작업이 끝나면 정리됩니다. Hugging Face 토큰은 이 브라우저에 입력하거나 저장하지 않습니다.</p></div></aside>
+      <aside className="boundary-note" id="privacy-note"><span className="notice-mark" aria-hidden="true">01</span><div><strong>서버 작업으로 결과를 만듭니다.</strong><p>선택한 파일과 설정은 서버 작업자로 전송됩니다. 실패하거나 취소된 작업의 파일은 정리되고, 성공한 작업의 입력과 결과는 내려받거나 보관 시간이 지날 때까지 서버에 남습니다. Hugging Face 토큰은 이 브라우저에 입력하거나 저장하지 않습니다.</p></div></aside>
 
       {recoverableJob && jobState.kind === "ready" && !resuming && (
         <p className="recovery-banner" role="status">이전에 시작한 작업이 있습니다. <button type="button" className="cancel-button" onClick={() => setResuming(true)}>이전 작업 이어보기</button></p>
@@ -595,7 +606,7 @@ export function ImageProcessor() {
         {jobState.kind === "result-ready" ? (
           <>
             <button type="button" className="launch-button" onClick={() => void handleDownloadResult()}>결과 다운로드</button>
-            <p className="launch-hint">결과는 10분 후 삭제됩니다</p>
+            <p className="launch-hint">결과는 보관 시간이 지나면 삭제됩니다</p>
           </>
         ) : (
           <button aria-describedby="launch-hint" className="launch-button" disabled={isBusy} type="submit">{actionLabelFor(jobState)}</button>

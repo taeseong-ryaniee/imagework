@@ -32,4 +32,63 @@ describe("local worker dependency contract", () => {
     expect(worker).toContain("os.rename(tmp_archive_path, archive_path)");
     expect(worker).toContain('"--self-test"');
   });
+  it("OW199 regression F1 mixed logo self-test contract", async () => {
+    const worker = await readFile(workerPath, "utf8");
+    const start = worker.indexOf("def _self_test()");
+    const selfTest = worker.slice(start, worker.indexOf("def main()", start));
+    expect(start).toBeGreaterThan(-1);
+
+    const image = /Image\.new\("RGB", \((\d+), (\d+)\), color=\((\d+), (\d+), (\d+)\)\)/.exec(selfTest);
+    const shape = /\.paste\(\((\d+), (\d+), (\d+)\), \((\d+), (\d+), (\d+), (\d+)\)\)/.exec(selfTest);
+    const box = /"cx": ([0-9.]+), "cy": ([0-9.]+), "width": ([0-9.]+), "height": ([0-9.]+)/.exec(selfTest);
+    expect(image).not.toBeNull();
+    expect(shape).not.toBeNull();
+    expect(box).not.toBeNull();
+    const [imageWidth, imageHeight] = [Number(image?.[1]), Number(image?.[2])];
+    const background = [3, 4, 5].map((index) => Number(image?.[index]));
+    const foreground = [1, 2, 3].map((index) => Number(shape?.[index]));
+    const [left, top, right, bottom] = [4, 5, 6, 7].map((index) => Number(shape?.[index]));
+    const [cx, cy, width, height] = [1, 2, 3, 4].map((index) => Number(box?.[index]));
+
+    // The correct mask (the shape) must be neither empty nor full: contrasting, non-empty, strictly inside the image.
+    const contrast = Math.max(...foreground.map((value, index) => Math.abs(value - background[index])));
+    expect(contrast).toBeGreaterThanOrEqual(100);
+    expect(right).toBeGreaterThan(left);
+    expect(bottom).toBeGreaterThan(top);
+    expect(left).toBeGreaterThan(0);
+    expect(top).toBeGreaterThan(0);
+    expect(right).toBeLessThan(imageWidth);
+    expect(bottom).toBeLessThan(imageHeight);
+    // The prompt box encloses the shape strictly and stays smaller than the image.
+    const boxLeft = (cx - width / 2) * imageWidth;
+    const boxRight = (cx + width / 2) * imageWidth;
+    const boxTop = (cy - height / 2) * imageHeight;
+    const boxBottom = (cy + height / 2) * imageHeight;
+    expect(boxLeft).toBeLessThan(left);
+    expect(boxTop).toBeLessThan(top);
+    expect(boxRight).toBeGreaterThan(right);
+    expect(boxBottom).toBeGreaterThan(bottom);
+    expect(width).toBeLessThan(1);
+    expect(height).toBeLessThan(1);
+    // Logo mode makes the vtracer path run, and the archive is inspected after _run_job.
+    expect(selfTest).toContain('"mode": "logo"');
+    expect(selfTest).toContain('["result.png", "result.svg"]');
+    expect(selfTest.indexOf("_verify_locks()")).toBeLessThan(selfTest.indexOf("_load_model()"));
+    expect(selfTest.indexOf("_load_model()")).toBeLessThan(selfTest.indexOf("_run_job("));
+    expect(selfTest.indexOf("_run_job(")).toBeLessThan(selfTest.indexOf("zipfile.ZipFile"));
+  });
+
+  it("OW199 support F5 documentation lifecycle claims", async () => {
+    const [claude, serverDoc, resultRoute] = await Promise.all([
+      readFile(resolve(process.cwd(), "CLAUDE.md"), "utf8"),
+      readFile(resolve(process.cwd(), "docs/server-worker.md"), "utf8"),
+      readFile(resolve(process.cwd(), "app/api/process/result/route.ts"), "utf8"),
+    ]);
+
+    expect(claude).not.toContain("spawned once at server startup");
+    expect(claude).not.toContain("Cleanup always runs");
+    expect(claude).toContain("process group");
+    expect(serverDoc).toContain("process group");
+    expect(resultRoute).not.toContain("accepted gap");
+  });
 });
